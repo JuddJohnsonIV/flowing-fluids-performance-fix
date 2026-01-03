@@ -860,34 +860,35 @@ public class OceanRiverWaterReplenishment {
     }
     
     /**
-     * UNDERWATER CURRENT PARTICLES
+     * ENHANCED UNDERWATER DRAINAGE BUBBLE STREAMS
      * 
-     * Spawns bubble particles in flowing water to show visible underwater currents.
-     * Called frequently to create a continuous stream of particles showing flow direction.
+     * Creates flowing bubble streams that follow water drainage paths from surface to air.
+     * Bubbles spawn at water surface and flow down through water following the actual drainage direction.
+     * Velocity matches the flow speed and direction for realistic water movement visualization.
      */
     public static void processUnderwaterCurrentParticles(ServerLevel level) {
         if (!enabled) {
             return;
         }
         
-        // Process every 2 ticks to balance visibility and performance
-        if (level.getGameTime() % 2 != 0) {
+        // Process every tick for smooth continuous bubble streams
+        if (level.getGameTime() % 1 != 0) {
             return;
         }
         
         int particlesSpawned = 0;
-        int maxParticlesPerTick = 80; // Moderate limit to ensure visibility without excessive lag
+        int maxParticlesPerTick = 120; // Increased for better coverage
         
         for (var player : level.players()) {
             if (particlesSpawned >= maxParticlesPerTick) break;
             
             BlockPos playerPos = player.blockPosition();
-            int radius = 28; // Moderate radius to cover nearby flowing water
+            int radius = 32; // Moderate radius to cover nearby flowing water
             
             // Scan for flowing water near player
             for (int dx = -radius; dx <= radius && particlesSpawned < maxParticlesPerTick; dx += 2) {
                 for (int dz = -radius; dz <= radius && particlesSpawned < maxParticlesPerTick; dz += 2) {
-                    for (int dy = -9; dy <= 5; dy++) {
+                    for (int dy = -12; dy <= 8; dy++) {
                         BlockPos checkPos = new BlockPos(
                             playerPos.getX() + dx, 
                             playerPos.getY() + dy, 
@@ -901,55 +902,90 @@ public class OceanRiverWaterReplenishment {
                         // Only process flowing water (not source blocks)
                         if (!fluidState.is(Fluids.FLOWING_WATER)) continue;
                         
-                        // Check if player is nearby (within 16 blocks) for particle spawning
-                        if (playerPos.distManhattan(checkPos) > 16) continue;
+                        // Check if player is nearby (within 20 blocks) for particle spawning
+                        if (playerPos.distManhattan(checkPos) > 20) continue;
                         
                         // Higher chance for actively flowing water (based on fluid level)
                         int fluidLevel = fluidState.getAmount();
-                        float spawnChance = fluidLevel > 4 ? 0.08f : 0.05f; // Higher chance for faster flow
+                        float spawnChance = fluidLevel > 4 ? 0.12f : 0.08f; // Increased chance for better visibility
                         if (RANDOM.nextFloat() > spawnChance) continue;
                         
-                        // Find which direction the water is flowing by checking neighbors
-                        BlockPos flowTarget = findFlowDirection(level, checkPos, fluidLevel);
-                        
-                        if (flowTarget != null) {
-                            // Calculate flow vector
-                            double flowX = flowTarget.getX() - checkPos.getX();
-                            double flowY = flowTarget.getY() - checkPos.getY();
-                            double flowZ = flowTarget.getZ() - checkPos.getZ();
-                            
-                            // Normalize
-                            double flowLength = Math.sqrt(flowX * flowX + flowY * flowY + flowZ * flowZ);
-                            if (flowLength > 0) {
-                                flowX /= flowLength;
-                                flowY /= flowLength;
-                                flowZ /= flowLength;
-                            }
-                            
-                            // Spawn bubble particles showing current direction
-                            double particleX = checkPos.getX() + 0.5 + (RANDOM.nextDouble() - 0.5) * 0.6;
-                            double particleY = checkPos.getY() + 0.3 + RANDOM.nextDouble() * 0.4;
-                            double particleZ = checkPos.getZ() + 0.5 + (RANDOM.nextDouble() - 0.5) * 0.6;
-                            
-                            // Velocity in flow direction
-                            double velX = flowX * 0.08 + (RANDOM.nextDouble() - 0.5) * 0.02;
-                            double velY = flowY * 0.05 + 0.01; // Slight upward bias for bubbles
-                            double velZ = flowZ * 0.08 + (RANDOM.nextDouble() - 0.5) * 0.02;
-                            
-                            // Send bubble particle
-                            level.sendParticles(
-                                ParticleTypes.BUBBLE,
-                                particleX, particleY, particleZ,
-                                1,
-                                velX, velY, velZ,
-                                0.0
-                            );
-                            
-                            particlesSpawned++;
-                        }
+                        // Create flowing bubble stream from this position
+                        createDrainageBubbleStream(level, checkPos, fluidLevel);
+                        particlesSpawned++;
                     }
                 }
             }
+        }
+    }
+    
+    /**
+     * Create a flowing bubble stream that follows water drainage path.
+     * Bubbles spawn at water surface and flow down through water to air below.
+     */
+    private static void createDrainageBubbleStream(ServerLevel level, BlockPos startPos, int fluidLevel) {
+        // Trace the drainage path from this position
+        BlockPos currentPos = startPos;
+        int pathLength = 0;
+        int maxPathLength = 8; // Limit path length for performance
+        
+        // Find the drainage path by following water flow
+        while (pathLength < maxPathLength && currentPos != null) {
+            FluidState currentFluid = level.getFluidState(currentPos);
+            
+            // Stop if we hit air (drainage destination) or source water
+            if (currentFluid.isEmpty() || currentFluid.isSource()) {
+                break;
+            }
+            
+            // Find next position in flow direction
+            BlockPos nextPos = findFlowDirection(level, currentPos, currentFluid.getAmount());
+            if (nextPos == null || nextPos.equals(currentPos)) {
+                break;
+            }
+            
+            // Calculate flow vector for this segment
+            double flowX = nextPos.getX() - currentPos.getX();
+            double flowY = nextPos.getY() - currentPos.getY();
+            double flowZ = nextPos.getZ() - currentPos.getZ();
+            
+            // Normalize and scale by flow speed
+            double flowLength = Math.sqrt(flowX * flowX + flowY * flowY + flowZ * flowZ);
+            if (flowLength > 0) {
+                flowX /= flowLength;
+                flowY /= flowLength;
+                flowZ /= flowLength;
+                
+                // Scale velocity based on fluid level (faster flow = more bubbles, higher velocity)
+                double speedMultiplier = (9 - fluidLevel) * 0.03; // Lower level = faster flow
+                
+                // Create multiple bubbles along this flow segment for continuous stream
+                int bubblesPerSegment = fluidLevel < 4 ? 3 : 2; // More bubbles for faster flow
+                
+                for (int i = 0; i < bubblesPerSegment; i++) {
+                    // Spawn bubble at current position with some randomness
+                    double particleX = currentPos.getX() + 0.5 + (RANDOM.nextDouble() - 0.5) * 0.4;
+                    double particleY = currentPos.getY() + 0.2 + RANDOM.nextDouble() * 0.6; // Throughout the water column
+                    double particleZ = currentPos.getZ() + 0.5 + (RANDOM.nextDouble() - 0.5) * 0.4;
+                    
+                    // Velocity matching flow direction and speed
+                    double velX = flowX * speedMultiplier + (RANDOM.nextDouble() - 0.5) * 0.01;
+                    double velY = flowY * speedMultiplier - 0.02; // Slight downward bias for drainage
+                    double velZ = flowZ * speedMultiplier + (RANDOM.nextDouble() - 0.5) * 0.01;
+                    
+                    // Send bubble particle with appropriate lifetime
+                    level.sendParticles(
+                        ParticleTypes.BUBBLE,
+                        particleX, particleY, particleZ,
+                        1,
+                        velX, velY, velZ,
+                        0.02 // Small speed multiplier for natural movement
+                    );
+                }
+            }
+            
+            currentPos = nextPos;
+            pathLength++;
         }
     }
     
