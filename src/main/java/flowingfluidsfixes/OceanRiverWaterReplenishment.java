@@ -806,28 +806,28 @@ public class OceanRiverWaterReplenishment {
         
         if (length > 0) {
             // Create sparse bubble particles flowing toward ocean
-            for (int i = 0; i < 3; i++) { // 3 particles per event
-                double offsetX = (RANDOM.nextDouble() - 0.5) * 0.5;
-                double offsetZ = (RANDOM.nextDouble() - 0.5) * 0.5;
-                double offsetY = RANDOM.nextDouble() * 0.3;
+            for (int i = 0; i < 2; i++) { // Reduced to 2 particles for less spam
+                double offsetX = (RANDOM.nextDouble() - 0.5) * 0.3; // Smaller spread
+                double offsetZ = (RANDOM.nextDouble() - 0.5) * 0.3;
+                double offsetY = RANDOM.nextDouble() * 0.2; // Smaller vertical range
                 
-                // Particle position with some randomness
+                // Particle position with some randomness - start from water surface
                 double particleX = waterPos.getX() + 0.5 + offsetX;
-                double particleY = waterPos.getY() + offsetY;
+                double particleY = waterPos.getY() + 0.1 + offsetY; // Start near water surface
                 double particleZ = waterPos.getZ() + 0.5 + offsetZ;
                 
-                // Particle velocity toward ocean with some randomness
-                double velX = (flowDirection.getX() / length) * 0.1 + (RANDOM.nextDouble() - 0.5) * 0.05;
-                double velY = 0.05 + RANDOM.nextDouble() * 0.03; // Slight upward bias
-                double velZ = (flowDirection.getZ() / length) * 0.1 + (RANDOM.nextDouble() - 0.5) * 0.05;
+                // Particle velocity toward ocean with minimal upward movement
+                double velX = (flowDirection.getX() / length) * 0.05 + (RANDOM.nextDouble() - 0.5) * 0.02;
+                double velY = 0.02 + RANDOM.nextDouble() * 0.01; // Minimal upward bias
+                double velZ = (flowDirection.getZ() / length) * 0.05 + (RANDOM.nextDouble() - 0.5) * 0.02;
                 
-                // Send bubble particle to all nearby players
+                // Send bubble particle with short lifetime
                 level.sendParticles(
                     ParticleTypes.BUBBLE,
                     particleX, particleY, particleZ,
                     1, // count
                     velX, velY, velZ,
-                    0.01 // speed multiplier
+                    0.0 // No speed multiplier - bubbles dissipate instantly in air
                 );
             }
         }
