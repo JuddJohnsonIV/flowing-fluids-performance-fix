@@ -834,80 +834,6 @@ public class OceanRiverWaterReplenishment {
     }
     
     /**
-     * FAST OCEAN SURFACE FILLING
-     * 
-     * Directly scans Y=63 (sea level) and converts non-source water to source blocks
-     * with a high chance per tick. This is fast but not instant to avoid breaking
-     * the draining system. Fills holes within a few seconds.
-     */
-    public static void processDirectOceanSurfaceFilling(ServerLevel level) {
-        if (!enabled) {
-            return;
-        }
-        
-        int filled = 0;
-        int maxPerTick = 500; // Fill up to 500 blocks per tick
-        
-        for (var player : level.players()) {
-            if (filled >= maxPerTick) break;
-            
-            BlockPos playerPos = player.blockPosition();
-            int radius = 96; // Large radius
-            
-            // Scan ONLY at sea level (Y=63) where ocean surface should be flat
-            int seaY = SEA_LEVEL; // Y=63
-            
-            for (int dx = -radius; dx <= radius && filled < maxPerTick; dx++) {
-                for (int dz = -radius; dz <= radius && filled < maxPerTick; dz++) {
-                    BlockPos checkPos = new BlockPos(
-                        playerPos.getX() + dx, 
-                        seaY, 
-                        playerPos.getZ() + dz
-                    );
-                    
-                    if (!level.isLoaded(checkPos)) continue;
-                    
-                    // Must be in ocean biome
-                    if (!BiomeOptimization.isOceanBiome(level, checkPos)) continue;
-                    
-                    FluidState fluidState = level.getFluidState(checkPos);
-                    BlockState blockState = level.getBlockState(checkPos);
-                    
-                    // Skip if already a source block
-                    if (fluidState.is(Fluids.WATER) && fluidState.isSource()) continue;
-                    
-                    // Check if this is a hole that needs filling:
-                    // - Flowing water (not source)
-                    // - Air that should be water
-                    boolean needsFilling = false;
-                    
-                    if (fluidState.is(Fluids.FLOWING_WATER)) {
-                        // Flowing water at sea level in ocean = needs to be source
-                        needsFilling = true;
-                    } else if (blockState.isAir()) {
-                        // Air at sea level - check if surrounded by water (it's a hole)
-                        if (hasAdjacentWaterSource(level, checkPos)) {
-                            needsFilling = true;
-                        }
-                    }
-                    
-                    if (needsFilling) {
-                        // 80% chance to fill - fast but not instant
-                        if (RANDOM.nextFloat() < 0.80f) {
-                            level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
-                            filled++;
-                        }
-                    }
-                }
-            }
-        }
-        
-        if (filled > 0) {
-            LOGGER.debug("Direct ocean surface fill: converted {} blocks to source at Y={}", filled, SEA_LEVEL);
-        }
-    }
-    
-    /**
      * UNDERWATER CURRENT PARTICLES
      * 
      * Spawns bubble particles in flowing water to show visible underwater currents.
@@ -918,24 +844,24 @@ public class OceanRiverWaterReplenishment {
             return;
         }
         
-        // Process every 3 ticks to reduce particle spam and performance impact
-        if (level.getGameTime() % 3 != 0) {
+        // Process every 2 ticks to balance visibility and performance
+        if (level.getGameTime() % 2 != 0) {
             return;
         }
         
         int particlesSpawned = 0;
-        int maxParticlesPerTick = 50; // Reduced limit to minimize performance impact
+        int maxParticlesPerTick = 80; // Moderate limit to ensure visibility without excessive lag
         
         for (var player : level.players()) {
             if (particlesSpawned >= maxParticlesPerTick) break;
             
             BlockPos playerPos = player.blockPosition();
-            int radius = 24; // Reduced radius to check fewer blocks
+            int radius = 28; // Moderate radius to check fewer blocks
             
             // Scan for flowing water near player
-            for (int dx = -radius; dx <= radius && particlesSpawned < maxParticlesPerTick; dx += 3) { // Increased step to reduce checks
-                for (int dz = -radius; dz <= radius && particlesSpawned < maxParticlesPerTick; dz += 3) { // Increased step to reduce checks
-                    for (int dy = -8; dy <= 4; dy++) { // Reduced vertical range
+            for (int dx = -radius; dx <= radius && particlesSpawned < maxParticlesPerTick; dx += 2) {
+                for (int dz = -radius; dz <= radius && particlesSpawned < maxParticlesPerTick; dz += 2) {
+                    for (int dy = -9; dy <= 5; dy++) {
                         BlockPos checkPos = new BlockPos(
                             playerPos.getX() + dx, 
                             playerPos.getY() + dy, 
@@ -949,11 +875,10 @@ public class OceanRiverWaterReplenishment {
                         // Only process flowing water (not source blocks)
                         if (!fluidState.is(Fluids.FLOWING_WATER)) continue;
                         
-                        // Reduced chance to spawn particle at this location (3% from 15%)
-                        if (RANDOM.nextFloat() > 0.03f) continue;
-                        
-                        // Get flow direction from fluid state
+                        // Higher chance for actively flowing water (based on fluid level)
                         int fluidLevel = fluidState.getAmount();
+                        float spawnChance = fluidLevel > 4 ? 0.08f : 0.05f; // Higher chance for faster flow
+                        if (RANDOM.nextFloat() > spawnChance) continue;
                         
                         // Find which direction the water is flowing by checking neighbors
                         BlockPos flowTarget = findFlowDirection(level, checkPos, fluidLevel);
