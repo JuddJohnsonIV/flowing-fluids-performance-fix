@@ -576,9 +576,16 @@ public class OceanRiverWaterReplenishment {
      * 
      * This addresses the issue where shore water is being depleted faster
      * than the top layer at Y=63 is being replenished.
+     * 
+     * OPTIMIZED: Runs every 3 ticks to balance performance with effectiveness.
      */
     public static void processAggressiveShoreWaterReplenishment(ServerLevel level) {
         if (!enabled || !FlowingFluidsIntegration.isFlowingFluidsLoaded()) {
+            return;
+        }
+        
+        // OPTIMIZED: Process every 3 ticks to reduce performance impact
+        if (level.getGameTime() % 3 != 0) {
             return;
         }
         
@@ -612,37 +619,39 @@ public class OceanRiverWaterReplenishment {
                     // AGGRESSIVE: Fill any air or non-source water at sea level in shore biomes
                     if (blockState.isAir() || (fluidState.is(Fluids.FLOWING_WATER) && !fluidState.isSource())) {
                         // Check if this should be water (near ocean/river or has water neighbors)
-                        boolean shouldFill = false;
                         
                         // Method 1: Check if surrounded by water (shore area)
                         int waterNeighbors = countAdjacentWaterSources(level, checkPos);
                         if (waterNeighbors >= 1) { // Very low threshold for shore areas
-                            shouldFill = true;
-                        } else {
-                            // Method 2: Check if near ocean/river water (within 2 blocks)
-                            boolean nearWater = false;
-                            for (int ox = -2; ox <= 2; ox++) {
-                                for (int oz = -2; oz <= 2; oz++) {
-                                    BlockPos nearPos = checkPos.offset(ox, 0, oz);
-                                    if (level.isLoaded(nearPos)) {
-                                        FluidState nearFluid = level.getFluidState(nearPos);
-                                        if (nearFluid.is(Fluids.WATER) || nearFluid.is(Fluids.FLOWING_WATER)) {
-                                            nearWater = true;
-                                            break;
-                                        }
+                            level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
+                            filled++;
+                            continue; // Skip other checks if already filled
+                        }
+                        
+                        // Method 2: Check if near ocean/river water (within 2 blocks)
+                        boolean nearWater = false;
+                        for (int ox = -2; ox <= 2; ox++) {
+                            for (int oz = -2; oz <= 2; oz++) {
+                                BlockPos nearPos = checkPos.offset(ox, 0, oz);
+                                if (level.isLoaded(nearPos)) {
+                                    FluidState nearFluid = level.getFluidState(nearPos);
+                                    if (nearFluid.is(Fluids.WATER) || nearFluid.is(Fluids.FLOWING_WATER)) {
+                                        nearWater = true;
+                                        break;
                                     }
                                 }
-                                if (nearWater) break;
                             }
-                            shouldFill = nearWater;
+                            if (nearWater) break;
+                        }
+                        
+                        if (nearWater) {
+                            level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
+                            filled++;
+                            continue; // Skip final check if already filled
                         }
                         
                         // ULTRA-AGGRESSIVE: Always fill in ocean/river biomes at sea level
-                        if (!shouldFill && BiomeOptimization.isOceanOrRiverBiome(level, checkPos)) {
-                            shouldFill = true;
-                        }
-                        
-                        if (shouldFill) {
+                        if (BiomeOptimization.isOceanOrRiverBiome(level, checkPos)) {
                             level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
                             filled++;
                         }
