@@ -962,4 +962,73 @@ public class OceanRiverWaterReplenishment {
         
         return bestTarget;
     }
+
+    /**
+     * ULTRA-AGGRESSIVE: Directly fill ocean surface holes at Y=63.
+     * This bypasses the queue system and instantly converts non-source water to source blocks.
+     */
+    public static void processDirectOceanSurfaceFilling(ServerLevel level) {
+        if (!enabled || !FlowingFluidsIntegration.isFlowingFluidsLoaded()) {
+            return;
+        }
+        
+        int filled = 0;
+        int maxPerTick = 5000; // Extremely aggressive - fill as many holes as possible
+        
+        for (var player : level.players()) {
+            if (filled >= maxPerTick) break;
+            
+            BlockPos playerPos = player.blockPosition();
+            int radius = 64; // Large radius to cover visible ocean surface
+            
+            // Focus strictly on Y=63 (sea level)
+            int worldY = SEA_LEVEL;
+            for (int dx = -radius; dx <= radius && filled < maxPerTick; dx++) {
+                for (int dz = -radius; dz <= radius && filled < maxPerTick; dz++) {
+                    BlockPos checkPos = new BlockPos(
+                        playerPos.getX() + dx, 
+                        worldY, 
+                        playerPos.getZ() + dz
+                    );
+                    
+                    if (!level.isLoaded(checkPos)) continue;
+                    
+                    // Only process in ocean biomes
+                    if (!BiomeOptimization.isOceanBiome(level, checkPos)) continue;
+                    
+                    FluidState fluidState = level.getFluidState(checkPos);
+                    BlockState blockState = level.getBlockState(checkPos);
+                    
+                    // Fill air or non-source water instantly
+                    if (blockState.isAir() || (fluidState.is(Fluids.FLOWING_WATER) && !fluidState.isSource())) {
+                        // Check if surrounded by ocean water (at least 2 adjacent source blocks)
+                        int sourceNeighbors = countAdjacentWaterSources(level, checkPos);
+                        if (sourceNeighbors >= 2) {
+                            level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
+                            filled++;
+                        }
+                    }
+                }
+            }
+        }
+        
+        if (filled > 0) {
+            LOGGER.debug("Directly filled {} ocean surface holes at Y={}", filled, SEA_LEVEL);
+        }
+    }
+    
+    /**
+     * Count adjacent water source blocks at the same Y level.
+     */
+    private static int countAdjacentWaterSources(ServerLevel level, BlockPos pos) {
+        int count = 0;
+        for (Direction dir : Direction.Plane.HORIZONTAL) {
+            BlockPos adjacent = pos.relative(dir);
+            FluidState adjacentFluid = level.getFluidState(adjacent);
+            if (adjacentFluid.is(Fluids.WATER) && adjacentFluid.isSource()) {
+                count++;
+            }
+        }
+        return count;
+    }
 }

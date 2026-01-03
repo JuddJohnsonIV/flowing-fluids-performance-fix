@@ -95,7 +95,7 @@ public class FluidEventHandler {
         
         // ULTRA-AGGRESSIVE: Direct ocean surface filling - instantly fill holes at Y=63
         // This bypasses the queue system and directly converts non-source water to source
-        OceanRiverWaterReplenishment.processDirectOceanSurfaceFilling(server, overworld);
+        OceanRiverWaterReplenishment.processDirectOceanSurfaceFilling(overworld);
         
         // ENHANCED: Aggressive rain water removal during rain to eliminate floating water
         OceanRiverWaterReplenishment.processRainWaterRemoval(overworld);
