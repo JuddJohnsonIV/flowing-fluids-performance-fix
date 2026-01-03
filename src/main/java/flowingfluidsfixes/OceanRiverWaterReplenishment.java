@@ -43,8 +43,8 @@ public class OceanRiverWaterReplenishment {
     // Maps position -> (tick when first seen, fluid level when first seen)
     private static final Map<BlockPos, DrainCandidate> drainCandidates = new ConcurrentHashMap<>();
     
-    // How long water must sit still before draining (in ticks) - 1.5 seconds = 30 ticks
-    private static final int DRAIN_DELAY_TICKS = 30;
+    // How long water must sit still before draining (in ticks) - 0.25 seconds = 5 ticks
+    private static final int DRAIN_DELAY_TICKS = 5;
     
     // Max drain candidates to track
     private static final int MAX_DRAIN_CANDIDATES = 5000;
@@ -69,7 +69,7 @@ public class OceanRiverWaterReplenishment {
             return false;
         }
         
-        // Must be at or below sea level
+        // Must be at or below sea level (STRICT: no replenishment above Y=63)
         if (pos.getY() > SEA_LEVEL) {
             return false;
         }
@@ -403,9 +403,9 @@ public class OceanRiverWaterReplenishment {
             return false;
         }
         
-        // Check if enough time has passed (reduced from 20 to 10 ticks for faster drainage)
+        // Check if enough time has passed (reduced from 10 to 2 ticks for INSTANT drainage)
         long ticksWaiting = currentTick - candidate.firstSeenTick();
-        return ticksWaiting >= 10; // 0.5 seconds instead of 1 second
+        return ticksWaiting >= 2; // 0.1 seconds - almost instant
     }
     
     /**
@@ -455,7 +455,7 @@ public class OceanRiverWaterReplenishment {
         long currentTick = level.getGameTime();
         int drained = 0;
         int tracked = 0;
-        int maxPerTick = 800; // Increased from 500 for more aggressive thin layer removal
+        int maxPerTick = 2000; // Very aggressive - process almost instantly
         
         // Clean up stale entries more frequently during rain (every 100 ticks)
         int cleanupInterval = level.isRaining() ? 100 : 200;
@@ -470,10 +470,10 @@ public class OceanRiverWaterReplenishment {
             BlockPos playerPos = player.blockPosition();
             int radius = level.isRaining() ? 64 : 48; // Larger radius during rain
             
-            // Scan ABOVE sea level with larger range during rain
-            int maxY = level.isRaining() ? SEA_LEVEL + 15 : SEA_LEVEL + 8;
-            for (int dx = -radius; dx <= radius && drained < maxPerTick; dx += 1) { // Reduced step from 2 to 1
-                for (int dz = -radius; dz <= radius && drained < maxPerTick; dz += 1) { // Reduced step from 2 to 1
+            // Scan ABOVE sea level with full coverage for instant leveling
+            int maxY = level.isRaining() ? SEA_LEVEL + 15 : SEA_LEVEL + 12;
+            for (int dx = -radius; dx <= radius && drained < maxPerTick; dx += 1) {
+                for (int dz = -radius; dz <= radius && drained < maxPerTick; dz += 1) {
                     for (int worldY = SEA_LEVEL + 1; worldY <= maxY; worldY++) {
                         BlockPos checkPos = new BlockPos(
                             playerPos.getX() + dx, 
@@ -492,6 +492,7 @@ public class OceanRiverWaterReplenishment {
                                 drained++;
                             }
                         } else if (!fluidState.isSource()) {
+                            // ALL non-source water above ocean should drain instantly
                             if (drainIntoOcean(level, checkPos, fluidState, currentTick)) {
                                 drained++;
                             } else if (isDrainCandidate(level, checkPos, fluidState)) {
@@ -621,10 +622,10 @@ public class OceanRiverWaterReplenishment {
         
         long currentTick = level.getGameTime();
         int processed = 0;
-        int maxPerTick = 1200; // Very aggressive for thin layers
+        int maxPerTick = 2000; // Very aggressive - process almost instantly
         
-        // Only process every 4 ticks to balance performance
-        if (currentTick % 4 != 0) {
+        // Only process every 1 tick for instant response
+        if (currentTick % 1 != 0) {
             return;
         }
         
@@ -632,7 +633,7 @@ public class OceanRiverWaterReplenishment {
             if (processed >= maxPerTick) break;
             
             BlockPos playerPos = player.blockPosition();
-            int radius = 32; // Smaller radius but more frequent
+            int radius = 48; // Larger radius for instant coverage
             
             // Focus on thin layers just above sea level
             for (int dx = -radius; dx <= radius && processed < maxPerTick; dx += 1) {
