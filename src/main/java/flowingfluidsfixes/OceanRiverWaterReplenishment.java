@@ -1062,13 +1062,33 @@ public class OceanRiverWaterReplenishment {
                         FluidState fluidState = level.getFluidState(checkPos);
                         BlockState blockState = level.getBlockState(checkPos);
                         
-                        // Fill air or non-source water instantly - NO adjacent source requirement
-                        // This ensures holes fill even if isolated
+                        // Fill air or non-source water instantly with intelligent density-based filling
                         if (blockState.isAir() || (fluidState.is(Fluids.FLOWING_WATER) && !fluidState.isSource())) {
-                            // ULTRA-AGGRESSIVE: Fill regardless of adjacent sources
-                            // This mimics natural ocean water level restoration
-                            level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
-                            filled++;
+                            // INTELLIGENT FILLING: Check surrounding water density for prioritization
+                            int sourceNeighbors = countAdjacentWaterSources(level, checkPos);
+                            
+                            // Priority filling based on surrounding water density:
+                            // - 4+ sources: Instant fill (well-connected ocean area)
+                            // - 2-3 sources: High priority fill 
+                            // - 1 source: Normal fill (edge areas)
+                            // - 0 sources: Skip fill (isolated holes may be intentional)
+                            
+                            if (sourceNeighbors >= 4) {
+                                // Well-connected area - instant fill
+                                level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
+                                filled++;
+                            } else if (sourceNeighbors >= 2) {
+                                // Moderately connected - fill with high priority
+                                level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
+                                filled++;
+                            } else if (sourceNeighbors >= 1) {
+                                // Edge area - fill but with lower priority (check every other tick)
+                                if (level.getGameTime() % 2 == 0) {
+                                    level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
+                                    filled++;
+                                }
+                            }
+                            // sourceNeighbors == 0: Skip isolated holes to preserve intentional water features
                         }
                     }
                 }
@@ -1083,12 +1103,15 @@ public class OceanRiverWaterReplenishment {
     /**
      * Count adjacent water source blocks at the same Y level.
      * 
-     * UTILITY METHOD: Currently unused but kept for potential future enhancements.
-     * Could be used for:
-     * - More intelligent ocean surface filling based on surrounding water density
-     * - Shore water detection and leveling algorithms
-     * - Advanced flow direction calculations
-     * - Biome-specific water behavior adjustments
+     * ACTIVE METHOD: Used by processDirectOceanSurfaceFilling for intelligent density-based filling.
+     * Provides smart prioritization based on surrounding water connectivity:
+     * - 4+ sources: Instant fill for well-connected ocean areas
+     * - 2-3 sources: High priority fill for moderately connected areas  
+     * - 1 source: Normal fill for edge areas (with tick-based throttling)
+     * - 0 sources: Skip isolated holes to preserve intentional water features
+     * 
+     * This prevents overfilling isolated water pockets while ensuring rapid restoration
+     * of connected ocean surfaces.
      */
     private static int countAdjacentWaterSources(ServerLevel level, BlockPos pos) {
         int count = 0;
