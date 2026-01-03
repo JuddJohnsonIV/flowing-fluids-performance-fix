@@ -93,6 +93,10 @@ public class FluidEventHandler {
         // This removes the darker rain water layer that spreads across the ocean causing lag
         OceanRiverWaterReplenishment.processInstantOceanSurfaceEvaporation(overworld);
         
+        // ULTRA-AGGRESSIVE: Direct ocean surface filling - instantly fill holes at Y=63
+        // This bypasses the queue system and directly converts non-source water to source
+        OceanRiverWaterReplenishment.processDirectOceanSurfaceFilling(overworld);
+        
         // ENHANCED: Aggressive rain water removal during rain to eliminate floating water
         OceanRiverWaterReplenishment.processRainWaterRemoval(overworld);
         
