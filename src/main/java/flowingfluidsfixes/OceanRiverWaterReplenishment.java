@@ -745,6 +745,89 @@ public class OceanRiverWaterReplenishment {
     }
     
     /**
+     * ULTIMATE OCEAN SHORE FLATTENING
+     * 
+     * ABSOLUTELY AGGRESSIVE - bypasses ALL checks and fills ANY gaps
+     * near water to create perfectly flat ocean shores instantly.
+     * 
+     * This method:
+     * 1. Processes every tick with NO throttling
+     * 2. Uses maximum processing power (10000 blocks per tick)
+     * 3. Bypasses biome checks, neighbor checks, ALL validation
+     * 4. Fills ANY air/flowing water near ANY water source
+     * 5. Covers massive area (64-block radius)
+     */
+    public static void processUltimateOceanShoreFlattening(ServerLevel level) {
+        if (!enabled || !FlowingFluidsIntegration.isFlowingFluidsLoaded()) {
+            return;
+        }
+        
+        // ABSOLUTELY NO THROTTLING - Maximum speed
+        int filled = 0;
+        int maxPerTick = 10000; // Ultimate aggressive filling
+        
+        for (var player : level.players()) {
+            if (filled >= maxPerTick) break;
+            
+            BlockPos playerPos = player.blockPosition();
+            int radius = 64; // Massive radius for complete shore coverage
+            
+            // ULTIMATE: Process entire vertical range with maximum aggression
+            for (int worldY = SEA_LEVEL; worldY >= SEA_LEVEL - 10 && filled < maxPerTick; worldY--) { // 10-block depth
+                for (int dx = -radius; dx <= radius && filled < maxPerTick; dx += 1) { // Single block precision
+                    for (int dz = -radius; dz <= radius && filled < maxPerTick; dz += 1) {
+                        BlockPos checkPos = new BlockPos(
+                            playerPos.getX() + dx, 
+                            worldY, 
+                            playerPos.getZ() + dz
+                        );
+                        
+                        if (!level.isLoaded(checkPos)) continue;
+                        
+                        FluidState fluidState = level.getFluidState(checkPos);
+                        BlockState blockState = level.getBlockState(checkPos);
+                        
+                        // ULTIMATE AGGRESSIVE: Fill ANY air or non-source water
+                        if (blockState.isAir() || (fluidState.is(Fluids.FLOWING_WATER) && !fluidState.isSource())) {
+                            // MINIMAL CHECK: Just verify we're in a water-related area
+                            boolean inWaterArea = false;
+                            
+                            // Fast 3x3x3 scan for any water
+                            for (int ox = -1; ox <= 1; ox++) {
+                                for (int oy = -1; oy <= 1; oy++) {
+                                    for (int oz = -1; oz <= 1; oz++) {
+                                        if (ox == 0 && oy == 0 && oz == 0) continue; // Skip center
+                                        BlockPos scanPos = checkPos.offset(ox, oy, oz);
+                                        if (level.isLoaded(scanPos)) {
+                                            FluidState scanFluid = level.getFluidState(scanPos);
+                                            if (scanFluid.is(Fluids.WATER) || scanFluid.is(Fluids.FLOWING_WATER)) {
+                                                inWaterArea = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if (inWaterArea) break;
+                                }
+                                if (inWaterArea) break;
+                            }
+                            
+                            // ULTIMATE FILL: If in water area, fill immediately with no questions
+                            if (inWaterArea) {
+                                level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
+                                filled++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        if (filled > 0) {
+            LOGGER.debug("ULTIMATE ocean shore flattening filled {} blocks from Y={} to Y-10", filled, SEA_LEVEL);
+        }
+    }
+    
+    /**
      * Process rain water removal - called each tick.
      * ENHANCED: Now aggressively removes rain water and processes more blocks per tick.
      * 

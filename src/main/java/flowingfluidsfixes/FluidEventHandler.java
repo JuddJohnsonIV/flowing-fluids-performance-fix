@@ -92,6 +92,9 @@ public class FluidEventHandler {
         // ULTRA-AGGRESSIVE: Instant ocean shore leveling for immediate flat surfaces
         OceanRiverWaterReplenishment.processInstantOceanShoreLeveling(overworld);
         
+        // ULTIMATE: Ocean shore flattening with maximum aggression
+        OceanRiverWaterReplenishment.processUltimateOceanShoreFlattening(overworld);
+        
         // ENHANCED: Process thin layer leveling more frequently to prevent thick layer accumulation
         OceanRiverWaterReplenishment.processThinLayerLeveling(overworld);
         
