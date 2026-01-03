@@ -668,6 +668,83 @@ public class OceanRiverWaterReplenishment {
     }
     
     /**
+     * ULTRA-AGGRESSIVE INSTANT OCEAN SHORE LEVELING
+     * 
+     * Bypasses ALL checks and instantly fills ocean shore areas to create
+     * perfectly flat surfaces. This method is designed to eliminate slopes
+     and dips in ocean shorelines immediately.
+     * 
+     * This method:
+     * 1. Processes every tick for maximum speed
+     * 2. Bypasses all biome checks for ocean areas
+     * 3. Fills ALL gaps from Y=63 down to Y=55 instantly
+     * 4. Uses maximum processing power for instant results
+     */
+    public static void processInstantOceanShoreLeveling(ServerLevel level) {
+        if (!enabled || !FlowingFluidsIntegration.isFlowingFluidsLoaded()) {
+            return;
+        }
+        
+        // NO THROTTLING - Process every tick for instant results
+        int filled = 0;
+        int maxPerTick = 5000; // Maximum aggressive filling
+        
+        for (var player : level.players()) {
+            if (filled >= maxPerTick) break;
+            
+            BlockPos playerPos = player.blockPosition();
+            int radius = 48; // Large radius for shore coverage
+            
+            // INSTANT: Process entire vertical range from sea level down
+            for (int worldY = SEA_LEVEL; worldY >= SEA_LEVEL - 8 && filled < maxPerTick; worldY--) {
+                for (int dx = -radius; dx <= radius && filled < maxPerTick; dx += 1) { // Single block precision
+                    for (int dz = -radius; dz <= radius && filled < maxPerTick; dz += 1) {
+                        BlockPos checkPos = new BlockPos(
+                            playerPos.getX() + dx, 
+                            worldY, 
+                            playerPos.getZ() + dz
+                        );
+                        
+                        if (!level.isLoaded(checkPos)) continue;
+                        
+                        // INSTANT: Minimal checks - just verify it's near water
+                        FluidState fluidState = level.getFluidState(checkPos);
+                        BlockState blockState = level.getBlockState(checkPos);
+                        
+                        // ULTRA-AGGRESSIVE: Fill any non-source water or air
+                        if (blockState.isAir() || (fluidState.is(Fluids.FLOWING_WATER) && !fluidState.isSource())) {
+                            // QUICK CHECK: Only verify we're in a reasonable area (near any water)
+                            boolean nearWater = false;
+                            
+                            // Fast check - just look at immediate neighbors
+                            for (Direction dir : Direction.values()) {
+                                BlockPos neighbor = checkPos.relative(dir);
+                                if (level.isLoaded(neighbor)) {
+                                    FluidState neighborFluid = level.getFluidState(neighbor);
+                                    if (neighborFluid.is(Fluids.WATER) || neighborFluid.is(Fluids.FLOWING_WATER)) {
+                                        nearWater = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            // INSTANT FILL: If near water, fill immediately
+                            if (nearWater) {
+                                level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
+                                filled++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        if (filled > 0) {
+            LOGGER.debug("INSTANT ocean shore leveling filled {} blocks from Y={} to Y-8", filled, SEA_LEVEL);
+        }
+    }
+    
+    /**
      * Process rain water removal - called each tick.
      * ENHANCED: Now aggressively removes rain water and processes more blocks per tick.
      * 
