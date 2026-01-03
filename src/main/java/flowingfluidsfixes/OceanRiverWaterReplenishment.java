@@ -568,6 +568,95 @@ public class OceanRiverWaterReplenishment {
     }
     
     /**
+     * AGGRESSIVE SHORE WATER REPLENISHMENT AT SEA LEVEL
+     * 
+     * Specifically targets Y=63 to prevent shore water depletion.
+     * This method replenishes water at sea level faster than it can be drained,
+     * ensuring the shore line maintains proper water levels.
+     * 
+     * This addresses the issue where shore water is being depleted faster
+     * than the top layer at Y=63 is being replenished.
+     */
+    public static void processAggressiveShoreWaterReplenishment(ServerLevel level) {
+        if (!enabled || !FlowingFluidsIntegration.isFlowingFluidsLoaded()) {
+            return;
+        }
+        
+        int filled = 0;
+        int maxPerTick = 2000; // Aggressive filling to outpace depletion
+        
+        for (var player : level.players()) {
+            if (filled >= maxPerTick) break;
+            
+            BlockPos playerPos = player.blockPosition();
+            int radius = SHORE_WATER_LEVELING_RADIUS; // Use existing radius
+            
+            // Focus specifically on Y=63 (sea level) for shore replenishment
+            int worldY = SEA_LEVEL;
+            for (int dx = -radius; dx <= radius && filled < maxPerTick; dx += 1) { // Single block precision
+                for (int dz = -radius; dz <= radius && filled < maxPerTick; dz += 1) {
+                    BlockPos checkPos = new BlockPos(
+                        playerPos.getX() + dx, 
+                        worldY, 
+                        playerPos.getZ() + dz
+                    );
+                    
+                    if (!level.isLoaded(checkPos)) continue;
+                    
+                    // Only process in ocean and river biomes (shore areas)
+                    if (!BiomeOptimization.isOceanOrRiverBiome(level, checkPos)) continue;
+                    
+                    FluidState fluidState = level.getFluidState(checkPos);
+                    BlockState blockState = level.getBlockState(checkPos);
+                    
+                    // AGGRESSIVE: Fill any air or non-source water at sea level in shore biomes
+                    if (blockState.isAir() || (fluidState.is(Fluids.FLOWING_WATER) && !fluidState.isSource())) {
+                        // Check if this should be water (near ocean/river or has water neighbors)
+                        boolean shouldFill = false;
+                        
+                        // Method 1: Check if surrounded by water (shore area)
+                        int waterNeighbors = countAdjacentWaterSources(level, checkPos);
+                        if (waterNeighbors >= 1) { // Very low threshold for shore areas
+                            shouldFill = true;
+                        } else {
+                            // Method 2: Check if near ocean/river water (within 2 blocks)
+                            boolean nearWater = false;
+                            for (int ox = -2; ox <= 2; ox++) {
+                                for (int oz = -2; oz <= 2; oz++) {
+                                    BlockPos nearPos = checkPos.offset(ox, 0, oz);
+                                    if (level.isLoaded(nearPos)) {
+                                        FluidState nearFluid = level.getFluidState(nearPos);
+                                        if (nearFluid.is(Fluids.WATER) || nearFluid.is(Fluids.FLOWING_WATER)) {
+                                            nearWater = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (nearWater) break;
+                            }
+                            shouldFill = nearWater;
+                        }
+                        
+                        // ULTRA-AGGRESSIVE: Always fill in ocean/river biomes at sea level
+                        if (!shouldFill && BiomeOptimization.isOceanOrRiverBiome(level, checkPos)) {
+                            shouldFill = true;
+                        }
+                        
+                        if (shouldFill) {
+                            level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
+                            filled++;
+                        }
+                    }
+                }
+            }
+        }
+        
+        if (filled > 0) {
+            LOGGER.debug("Aggressive shore water replenishment filled {} holes at Y={}", filled, SEA_LEVEL);
+        }
+    }
+    
+    /**
      * Process rain water removal - called each tick.
      * ENHANCED: Now aggressively removes rain water and processes more blocks per tick.
      * 
