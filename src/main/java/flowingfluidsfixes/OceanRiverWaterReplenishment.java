@@ -1200,6 +1200,65 @@ public class OceanRiverWaterReplenishment {
     }
     
     /**
+     * INSTANT OCEAN SURFACE RESTORATION
+     * 
+     * Bypasses ALL checks and instantly fills any holes at ocean surface level (Y=63).
+     * This is the ultimate solution for complete surface restoration after draining.
+     * 
+     * This method:
+     * - Ignores all biome checks (fills anywhere that could be ocean)
+     * - Ignores all adjacent water checks 
+     * - Fills every single air/flowing water block at Y=63
+     * - Processes every tick with maximum aggressiveness
+     * - Designed specifically to eliminate any remaining surface dips
+     */
+    public static void processInstantOceanSurfaceRestoration(ServerLevel level) {
+        if (!enabled || !FlowingFluidsIntegration.isFlowingFluidsLoaded()) {
+            return;
+        }
+        
+        // Process EVERY tick for instant restoration
+        int filled = 0;
+        int maxPerTick = 5000; // Maximum aggressive filling
+        
+        for (var player : level.players()) {
+            if (filled >= maxPerTick) break;
+            
+            BlockPos playerPos = player.blockPosition();
+            int radius = 80; // Very large radius for maximum coverage
+            
+            // Focus ONLY on sea level (Y=63) for instant surface restoration
+            int worldY = SEA_LEVEL;
+            for (int dx = -radius; dx <= radius && filled < maxPerTick; dx++) { // Single block steps for completeness
+                for (int dz = -radius; dz <= radius && filled < maxPerTick; dz++) {
+                    BlockPos checkPos = new BlockPos(
+                        playerPos.getX() + dx, 
+                        worldY, 
+                        playerPos.getZ() + dz
+                    );
+                    
+                    if (!level.isLoaded(checkPos)) continue;
+                    
+                    FluidState fluidState = level.getFluidState(checkPos);
+                    BlockState blockState = level.getBlockState(checkPos);
+                    
+                    // INSTANT: Fill ANY air or non-source water at sea level, no questions asked
+                    if (blockState.isAir() || (fluidState.is(Fluids.FLOWING_WATER) && !fluidState.isSource())) {
+                        // ULTRA-AGGRESSIVE: Fill regardless of biome, surroundings, or anything else
+                        // This ensures complete surface restoration
+                        level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
+                        filled++;
+                    }
+                }
+            }
+        }
+        
+        if (filled > 0) {
+            LOGGER.info("Instant ocean surface restoration filled {} holes at Y={}", filled, SEA_LEVEL);
+        }
+    }
+    
+    /**
      * Count adjacent water source blocks at the same Y level.
      * 
      * ACTIVE METHOD: Used by processDirectOceanSurfaceFilling for intelligent density-based filling.

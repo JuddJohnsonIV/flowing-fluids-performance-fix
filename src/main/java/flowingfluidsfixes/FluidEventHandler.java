@@ -100,6 +100,9 @@ public class FluidEventHandler {
         // AGGRESSIVE: Final surface leveling for complete smooth ocean height
         OceanRiverWaterReplenishment.processAggressiveSurfaceLeveling(overworld);
         
+        // INSTANT: Ultimate surface restoration to eliminate any remaining dips
+        OceanRiverWaterReplenishment.processInstantOceanSurfaceRestoration(overworld);
+        
         // ENHANCED: Aggressive rain water removal during rain to eliminate floating water
         OceanRiverWaterReplenishment.processRainWaterRemoval(overworld);
         
