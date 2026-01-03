@@ -696,54 +696,49 @@ public class OceanRiverWaterReplenishment {
         // }
         
         int evaporated = 0;
-        int maxPerTick = 2000; // Very aggressive - process as many as possible
+        int maxPerTick = 10000; // EXTREMELY aggressive - process as many as possible
         
         for (var player : level.players()) {
             if (evaporated >= maxPerTick) break;
             
             BlockPos playerPos = player.blockPosition();
-            int radius = 96; // Large radius to catch all ocean surface water
+            int radius = 128; // Massive radius to cover entire visible area
             
-            // ONLY scan at Y=64 (one block above sea level) - this is where the problem layer sits
-            int surfaceY = SEA_LEVEL + 1; // Y=64
-            
-            for (int dx = -radius; dx <= radius && evaporated < maxPerTick; dx++) {
-                for (int dz = -radius; dz <= radius && evaporated < maxPerTick; dz++) {
-                    BlockPos checkPos = new BlockPos(
-                        playerPos.getX() + dx, 
-                        surfaceY, 
-                        playerPos.getZ() + dz
-                    );
-                    
-                    if (!level.isLoaded(checkPos)) continue;
-                    
-                    FluidState fluidState = level.getFluidState(checkPos);
-                    
-                    // Skip if empty or source block
-                    if (fluidState.isEmpty() || fluidState.isSource()) continue;
-                    
-                    // Only process thin layers (level 1-4)
-                    int fluidLevel = fluidState.getAmount();
-                    if (fluidLevel > 4) continue;
-                    
-                    // Check if sitting directly on ocean source water
-                    BlockPos belowPos = checkPos.below(); // Y=63
-                    FluidState belowFluid = level.getFluidState(belowPos);
-                    
-                    if (belowFluid.is(Fluids.WATER) && belowFluid.isSource()) {
-                        // Verify we're in ocean/river biome
-                        if (BiomeOptimization.isOceanOrRiverBiome(level, belowPos)) {
-                            // Immediate absorption - very high chance for all thin layers
-                            // Thinner layers absorb faster
-                            float evapChance = switch (fluidLevel) {
-                                case 1 -> 1.0f;  // 100% chance for level 1
-                                case 2 -> 0.95f; // 95% chance for level 2
-                                case 3 -> 0.90f; // 90% chance for level 3
-                                case 4 -> 0.85f; // 85% chance for level 4
-                                default -> 0.80f;
-                            };
-                            
-                            if (RANDOM.nextFloat() < evapChance) {
+            // Scan multiple Y levels above sea level to catch all thin layers
+            for (int worldY = SEA_LEVEL + 1; worldY <= SEA_LEVEL + 3; worldY++) {
+                for (int dx = -radius; dx <= radius && evaporated < maxPerTick; dx++) {
+                    for (int dz = -radius; dz <= radius && evaporated < maxPerTick; dz++) {
+                        BlockPos checkPos = new BlockPos(
+                            playerPos.getX() + dx, 
+                            worldY, 
+                            playerPos.getZ() + dz
+                        );
+                        
+                        if (!level.isLoaded(checkPos)) continue;
+                        
+                        FluidState fluidState = level.getFluidState(checkPos);
+                        
+                        // Skip if empty or source block
+                        if (fluidState.isEmpty() || fluidState.isSource()) continue;
+                        
+                        // Only process thin layers (level 1-6) - expanded range
+                        int fluidLevel = fluidState.getAmount();
+                        if (fluidLevel > 6) continue;
+                        
+                        // Check if sitting directly on ocean source water OR near ocean surface
+                        BlockPos belowPos = checkPos.below();
+                        FluidState belowFluid = level.getFluidState(belowPos);
+                        
+                        // Check if on ocean source OR if below is ocean and we're near surface
+                        boolean onOceanSource = belowFluid.is(Fluids.WATER) && belowFluid.isSource();
+                        boolean nearOceanSurface = worldY <= SEA_LEVEL + 2 && 
+                            BiomeOptimization.isOceanOrRiverBiome(level, checkPos);
+                        
+                        if (onOceanSource || nearOceanSurface) {
+                            // Verify we're in ocean/river biome (for near-surface case)
+                            if (onOceanSource || BiomeOptimization.isOceanOrRiverBiome(level, belowPos)) {
+                                // INSTANT ABSORPTION - no random chance, always remove thin layers
+                                // This mimics how real ocean water absorbs runoff instantly
                                 level.setBlock(checkPos, Blocks.AIR.defaultBlockState(), 3);
                                 evaporated++;
                             }
