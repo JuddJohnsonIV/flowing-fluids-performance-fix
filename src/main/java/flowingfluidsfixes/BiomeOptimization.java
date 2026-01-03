@@ -199,10 +199,14 @@ public class BiomeOptimization {
      */
     private static String getBiomeName(Level level, BlockPos pos) {
         if (level instanceof net.minecraft.server.level.ServerLevel serverLevel) {
-            var biome = serverLevel.getBiome(pos);
-            var registry = serverLevel.registryAccess().registryOrThrow(net.minecraft.core.Registry.BIOME_REGISTRY);
-            var key = registry.getKey(biome);
-            return key != null ? key.getPath() : "unknown";
+            var registry = serverLevel.registryAccess().registryOrThrow(net.minecraft.core.registries.Registries.BIOME);
+            for (var biomeHolder : registry.holders().toList()) {
+                var biome = biomeHolder.value();
+                var key = registry.getKey(biome);
+                if (key != null && key.getPath().equals(biome.toString())) {
+                    return key.getPath();
+                }
+            }
         }
         return "unknown";
     }

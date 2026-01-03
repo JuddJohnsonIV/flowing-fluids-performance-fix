@@ -26,22 +26,17 @@ public class FluidOptimizer {
     private static final Logger LOGGER = LogManager.getLogger(FluidOptimizer.class);
     private static final int MAX_HIGH_PRIORITY_UPDATES = 1000;
     private static final int MAX_STANDARD_UPDATES = 1500;
-    private static final double TPS_EMERGENCY_THRESHOLD = 8.0;
+    public static final double TPS_EMERGENCY_THRESHOLD = 12.0;
     private static final int EMERGENCY_MODE_THRESHOLD = 100;
-    private static final int EMERGENCY_MODE_MULTIPLIER = 6;
+    public static final int EMERGENCY_MODE_MULTIPLIER = 8;
     private static final int MIN_UPDATES_PER_TICK = 25;
     private static final long CACHE_CLEANUP_INTERVAL = 10000;
     private static final int MAX_CACHE_SIZE = 200000;
-    public static final int BASE_UPDATES_PER_TICK = 1500;
+    public static final int BASE_UPDATES_PER_TICK = 300;
 
     private final PriorityBlockingQueue<FluidUpdate> highPriorityUpdates = new PriorityBlockingQueue<>(MAX_HIGH_PRIORITY_UPDATES, Comparator.comparingInt(FluidUpdate::getPriority).reversed());
     private final PriorityBlockingQueue<FluidUpdate> standardUpdates = new PriorityBlockingQueue<>(MAX_STANDARD_UPDATES, Comparator.comparingInt(FluidUpdate::getPriority).reversed());
-    private final Map<BlockPos, FluidFlowPrediction> flowCache = Collections.synchronizedMap(new LinkedHashMap() {
-        @Override
-        protected boolean removeEldestEntry(Map.Entry eldest) {
-            return size() > MAX_CACHE_SIZE;
-        }
-    });
+    private final Map<BlockPos, FluidFlowPrediction> flowCache = Collections.synchronizedMap(new LRUCache<>(MAX_CACHE_SIZE));
 
     private final AtomicLong lastCleanupTime = new AtomicLong(0);
     private final AtomicBoolean emergencyModeActive = new AtomicBoolean(false);
@@ -64,7 +59,14 @@ public class FluidOptimizer {
         return instance;
     }
 
-    public void queueFluidUpdate(Level worldLevel, BlockPos blockPos, FluidState fluidState, BlockState blockState, int updatePriority) {
+    /**
+     * Static convenience method for mixin calls
+     */
+    public static void queueFluidUpdate(Level worldLevel, BlockPos blockPos, FluidState fluidState, BlockState blockState) {
+        getInstance().queueFluidUpdateInstance(worldLevel, blockPos, fluidState, blockState, 1);
+    }
+
+    public void queueFluidUpdateInstance(Level worldLevel, BlockPos blockPos, FluidState fluidState, BlockState blockState, int updatePriority) {
         if (worldLevel instanceof ServerLevel serverLevel) {
             // Check if the position is already queued to avoid duplicates
             FluidUpdate newUpdate = new FluidUpdate(serverLevel, blockPos, fluidState, blockState, updatePriority);
@@ -87,10 +89,6 @@ public class FluidOptimizer {
         }
     }
 
-    public void queueFluidUpdate(Level worldLevel, BlockPos blockPos, FluidState fluidState, BlockState blockState) {
-        queueFluidUpdate(worldLevel, blockPos, fluidState, blockState, 1);
-        LOGGER.debug("Queued fluid update at {} with default priority", blockPos);
-    }
 
     @SubscribeEvent
     public void processTick(TickEvent.ServerTickEvent event) {
@@ -210,15 +208,15 @@ public class FluidOptimizer {
     }
 
     private int calculateDynamicUpdateCount(double ticksPerSecond) {
-        int baseUpdates = 100; // Further reduced from 200 to prevent server overload
-        if (ticksPerSecond < 6.0) { // Reduced from 8.0
-            return baseUpdates / 3; // More aggressive reduction
-        } else if (ticksPerSecond < 10.0) { // Reduced from 12.0
-            return (int)(baseUpdates * 0.5); // More conservative
-        } else if (ticksPerSecond < 14.0) { // Reduced from 16.0
-            return (int)(baseUpdates * 0.7); // More conservative
+        int baseUpdates = 50; // Dramatically reduced to prevent server overload
+        if (ticksPerSecond < 10.0) {
+            return baseUpdates / 4; // Very aggressive reduction under load
+        } else if (ticksPerSecond < 15.0) {
+            return (int)(baseUpdates * 0.6); // Conservative processing
+        } else if (ticksPerSecond < 18.0) {
+            return (int)(baseUpdates * 0.8); // Still conservative
         }
-        return baseUpdates;
+        return baseUpdates; // Maximum safe limit
     }
 
     public int calculateDynamicUpdateLimit(double tpsValue) {
@@ -232,9 +230,9 @@ public class FluidOptimizer {
         
         // Iterate manually to avoid nested synchronization on synchronizedMap
         List<BlockPos> toRemove = new ArrayList<>();
-        for (Map.Entry entry : flowCache.entrySet()) {
-            BlockPos pos = (BlockPos) entry.getKey();
-            FluidFlowPrediction prediction = (FluidFlowPrediction) entry.getValue();
+        for (Map.Entry<BlockPos, FluidFlowPrediction> entry : flowCache.entrySet()) {
+            BlockPos pos = entry.getKey();
+            FluidFlowPrediction prediction = entry.getValue();
             
             // Remove if prediction is invalid OR outside simulation distance
             if (!prediction.isValid() || !FluidProcessingDistanceLimit.isWithinProcessingRange(pos)) {
@@ -386,6 +384,24 @@ public class FluidOptimizer {
 
         void setPriority(int priority) {
             this.priority = priority;
+        }
+    }
+
+    /**
+     * LRU Cache implementation for flow predictions with automatic eviction
+     */
+    private static class LRUCache<K, V> extends LinkedHashMap<K, V> {
+        private static final long serialVersionUID = 1L;
+        private final int maxSize;
+
+        LRUCache(int maxSize) {
+            super(maxSize, 0.75f, true);
+            this.maxSize = maxSize;
+        }
+
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<K, V> eldest) {
+            return size() > maxSize;
         }
     }
 }

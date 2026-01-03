@@ -1,9 +1,12 @@
 # Gradle
 .gradle/
+.gradle/**
 build/
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
 !**/src/test/**/build/
+gradle-*.zip
+gradle-7.6.1-bin.zip
 
 # IntelliJ IDEA
 .idea/

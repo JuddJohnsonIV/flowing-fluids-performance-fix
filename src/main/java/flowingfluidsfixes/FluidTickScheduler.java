@@ -1,6 +1,7 @@
 package flowingfluidsfixes;
 
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -50,7 +51,7 @@ public class FluidTickScheduler {
     private static final Map<BlockPos, BlockPos> fluidChangeOrigins = new ConcurrentHashMap<>();
     
     // Adaptive throttling based on server performance
-    private static volatile int adaptiveMaxUpdatesPerTick = 800; // Increased from 500 for better throughput
+    private static volatile int adaptiveMaxUpdatesPerTick = 200; // Reduced from 800 for aggressive throttling
     private static volatile double lastKnownTPS = 20.0;
     
     // TIME BUDGET SYSTEM - Dynamic limit on fluid processing time per tick
@@ -195,18 +196,49 @@ public class FluidTickScheduler {
         
         // FAST PATH: Check if this is a stable/cached flow that doesn't need processing
         if (isStableCachedFlow(pos, state)) {
-            // Flow hasn't changed, use cached delay or skip entirely
-            heavyFlowCacheHits.incrementAndGet();
-            fluidTimeUsedThisTick += System.nanoTime() - startTime;
-            return;
+            // CRITICAL: For Flowing Fluids, verify this cached flow can't still drain
+            if (FlowingFluidsIntegration.isFlowingFluidsLoaded()) {
+                // Double-check that this fluid truly can't flow anywhere
+                if (canFluidFlowAnywhere(level, pos, state)) {
+                    // It can still flow - remove from cache and process normally
+                    stableFlowCache.remove(pos);
+                    LOGGER.debug("Flowing Fluids: Cached flow at {} can still flow - processing", pos);
+                } else {
+                    // Truly stable - safe to skip
+                    heavyFlowCacheHits.incrementAndGet();
+                    fluidTimeUsedThisTick += System.nanoTime() - startTime;
+                    return;
+                }
+            } else {
+                // Vanilla behavior - safe to skip cached flows
+                heavyFlowCacheHits.incrementAndGet();
+                fluidTimeUsedThisTick += System.nanoTime() - startTime;
+                return;
+            }
         }
         
         // STABLE SOURCE BLOCK CHECK: Skip source blocks in equilibrium (lakes, pools, oceans)
         // This is a major optimization - stable water bodies don't need constant recalculation
         if (state.isSource() && isStableSourceBlock(level, pos, state)) {
-            heavyFlowCacheHits.incrementAndGet();
-            fluidTimeUsedThisTick += System.nanoTime() - startTime;
-            return; // Skip - stable source block in equilibrium
+            // CRITICAL: For Flowing Fluids, verify this source can't still spread
+            if (FlowingFluidsIntegration.isFlowingFluidsLoaded()) {
+                // Check if this source can still spread to adjacent blocks
+                if (canSourceBlockSpread(level, pos, state)) {
+                    // It can spread - remove from cache and process normally
+                    stableSourceBlockCache.remove(pos);
+                    LOGGER.debug("Flowing Fluids: Source at {} can still spread - processing", pos);
+                } else {
+                    // Truly stable - safe to skip
+                    heavyFlowCacheHits.incrementAndGet();
+                    fluidTimeUsedThisTick += System.nanoTime() - startTime;
+                    return;
+                }
+            } else {
+                // Vanilla behavior - safe to skip stable sources
+                heavyFlowCacheHits.incrementAndGet();
+                fluidTimeUsedThisTick += System.nanoTime() - startTime;
+                return; // Skip - stable source block in equilibrium
+            }
         }
         
         // ENTITY PROTECTION CHECK: Skip fluid processing if entities nearby need CPU time
@@ -556,6 +588,62 @@ public class FluidTickScheduler {
     }
     
     /**
+     * Check if fluid can flow anywhere (downward or horizontally)
+     * Critical for determining if a fluid is truly stable
+     */
+    private static boolean canFluidFlowAnywhere(ServerLevel level, BlockPos pos, FluidState state) {
+        if (state.isEmpty()) return false;
+        
+        // Check downward flow
+        if (canFluidFlowDownward(level, pos, state)) {
+            return true;
+        }
+        
+        // Check horizontal flow
+        if (canFluidFlowHorizontally(level, pos, state)) {
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Check if a source block can spread to adjacent positions
+     * Used for Flowing Fluids to determine if a source is truly stable
+     */
+    private static boolean canSourceBlockSpread(ServerLevel level, BlockPos pos, FluidState state) {
+        // Check downward spread
+        BlockPos below = pos.below();
+        if (level.isInWorldBounds(below)) {
+            FluidState belowFluid = level.getFluidState(below);
+            if (belowFluid.isEmpty() || 
+                (belowFluid.getType().isSame(state.getType()) && !belowFluid.isSource())) {
+                return true;
+            }
+        }
+        
+        // Check horizontal spread
+        for (Direction dir : Direction.Plane.HORIZONTAL) {
+            BlockPos neighbor = pos.relative(dir);
+            if (!level.isInWorldBounds(neighbor)) continue;
+            
+            var neighborBlock = level.getBlockState(neighbor);
+            FluidState neighborFluid = neighborBlock.getFluidState();
+            
+            if (neighborBlock.isAir() || (neighborFluid.isEmpty() && !isBlockSolid(level, neighbor))) {
+                return true;
+            }
+            
+            if (neighborFluid.getType().isSame(state.getType()) && 
+                !neighborFluid.isSource() && neighborFluid.getAmount() < 8) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+    
+    /**
      * Cache flow state for optimization
      */
     private static void cacheFlowState(BlockPos pos, FluidState state, UpdatePriority priority) {
@@ -709,19 +797,17 @@ public class FluidTickScheduler {
         // Never defer critical updates
         if (priority == UpdatePriority.CRITICAL) return false;
         
-        // Check if server is under load, even more aggressive deferral
-        if (lastKnownTPS < 18.0) { // Changed from 16.0 to 18.0 for earlier throttling
-            // Defer non-critical updates when TPS is even slightly low
-            return priority == UpdatePriority.LOW || priority == UpdatePriority.NORMAL;
+        // VERY AGGRESSIVE DEFERRAL: Defer almost everything under any load
+        if (lastKnownTPS < 19.0) {
+            // Only process HIGH priority updates, defer everything else
+            return priority != UpdatePriority.HIGH;
         }
         
         // Check if we've hit the adaptive limit
         if (totalScheduled.get() > adaptiveMaxUpdatesPerTick) {
-            return priority != UpdatePriority.HIGH;
+            return true;
         }
         
-        // Defer outer fluids more often to prioritize likely-to-flow fluids
-        // Always defer low priority (outer) fluids
         return priority == UpdatePriority.LOW;
     }
     
@@ -1066,6 +1152,22 @@ public class FluidTickScheduler {
                     FlowingFluidsPerformanceMonitor.UpdateType.SKIPPED);
             }
         }
+    }
+    
+    /**
+     * Get statistics for testing and monitoring
+     */
+    public static Map<String, Object> getStats() {
+        Map<String, Object> stats = new HashMap<>();
+        stats.put("totalScheduled", totalScheduled.get());
+        stats.put("criticalUpdates", criticalUpdates.get());
+        stats.put("deferredUpdates", deferredUpdates.get());
+        stats.put("edgeFluidsSkipped", edgeFluidsSkipped.get());
+        stats.put("heavyFlowCacheHits", heavyFlowCacheHits.get());
+        stats.put("stableFlowCacheSize", stableFlowCache.size());
+        stats.put("edgeFluidCacheSize", edgeFluidCache.size());
+        stats.put("deferredQueueSize", deferredQueue.size());
+        return stats;
     }
     
     /**

@@ -4,7 +4,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraftforge.event.world.BlockEvent;
+import net.minecraftforge.event.level.BlockEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import org.apache.logging.log4j.LogManager;
@@ -28,8 +28,8 @@ public class ForgeFluidHandler {
      * Monitor block placement events (when players place fluid blocks)
      */
     @SubscribeEvent
-    public static void onBlockPlace(BlockEvent.EntityPlaceEvent event) {
-        LevelAccessor accessor = event.getWorld();
+    public static void onBlockPlace(BlockEvent.EntityMultiPlaceEvent event) {
+        LevelAccessor accessor = event.getLevel();
         if (!(accessor instanceof Level level) || level.isClientSide()) {
             return;
         }
@@ -47,7 +47,7 @@ public class ForgeFluidHandler {
      */
     @SubscribeEvent
     public static void onBlockBreak(BlockEvent.BreakEvent event) {
-        LevelAccessor accessor = event.getWorld();
+        LevelAccessor accessor = event.getLevel();
         if (!(accessor instanceof Level level) || level.isClientSide()) {
             return;
         }

@@ -15,6 +15,9 @@ import net.minecraft.world.level.material.Fluids;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.event.TickEvent;
+import net.minecraft.core.Registry;
+import net.minecraft.core.Holder;
+import net.minecraft.world.level.biome.Biome;
 
 @Mod.EventBusSubscriber(modid = "flowingfluidsfixes", bus = Mod.EventBusSubscriber.Bus.FORGE)
 @SuppressWarnings("all")
@@ -39,6 +42,13 @@ public class FlowingFluidsIntegration {
 
     public static boolean isFlowingFluidsLoaded() {
         return flowingFluidsLoaded;
+    }
+
+    public static String getIntegrationStatus() {
+        if (flowingFluidsLoaded) {
+            return "ACTIVE - Flowing Fluids detected and integrated";
+        }
+        return "STANDBY - Flowing Fluids not detected";
     }
 
     public static boolean isFloatingWaterLayer(ServerLevel level, BlockPos pos, FluidState state) {
@@ -118,14 +128,19 @@ public class FlowingFluidsIntegration {
     private static boolean isInSpecialBiome(ServerLevel level, BlockPos pos) {
         return FlowingFluidsAPIIntegration.isFlowingFluidsAvailable() 
             ? FlowingFluidsAPIIntegration.doesBiomeInfiniteWaterRefill(level, pos)
-            : getBiomeName(level, pos).matches(".*\b(ocean|river|swamp|beach)\b.*");
+            : getBiomeName(level, pos).matches(".*\\b(ocean|river|swamp|beach)\\b.*");
     }
     
     private static String getBiomeName(ServerLevel level, BlockPos pos) {
-        var biome = level.getBiome(pos);
-        var registry = level.registryAccess().registryOrThrow(net.minecraft.core.Registry.BIOME_REGISTRY);
-        var key = registry.getKey(biome);
-        return key != null ? key.toString() : "";
+        var registry = level.registryAccess().registryOrThrow(net.minecraft.core.registries.Registries.BIOME);
+        for (var biomeHolder : registry.holders().toList()) {
+            var biome = biomeHolder.value();
+            var key = registry.getKey(biome);
+            if (key != null && level.getBiome(pos).equals(biomeHolder)) {
+                return key.toString();
+            }
+        }
+        return "";
     }
     
     /**

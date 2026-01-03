@@ -177,12 +177,18 @@ public class CreateModCompatibility {
         }
         
         // Check biome
-        var biome = level.getBiome(pos);
-        var registry = level.registryAccess().registryOrThrow(net.minecraft.core.Registry.BIOME_REGISTRY);
-        var key = registry.getKey(biome);
-        String biomeName = key != null ? key.getPath() : "";
+        var registry = level.registryAccess().registryOrThrow(net.minecraft.core.registries.Registries.BIOME);
+        for (var biomeHolder : registry.holders().toList()) {
+            var biome = biomeHolder.value();
+            var key = registry.getKey(biome);
+            String biomeName = key != null ? key.getPath() : "";
+            
+            if (biomeName.contains("river")) {
+                return true;
+            }
+        }
         
-        return biomeName.contains("river");
+        return false;
     }
     
     /**

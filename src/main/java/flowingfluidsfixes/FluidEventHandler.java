@@ -82,6 +82,13 @@ public class FluidEventHandler {
         // by slowly refilling them, preserving finite water system elsewhere
         OceanRiverWaterReplenishment.processReplenishments(overworld);
         
+        // CRITICAL: Process shore water leveling - water flowing into ocean/river
+        // should merge with ocean water level to reduce constant calculations
+        OceanRiverWaterReplenishment.processShoreWaterLeveling(overworld);
+        
+        // ENHANCED: Aggressive rain water removal during rain to eliminate floating water
+        OceanRiverWaterReplenishment.processRainWaterRemoval(overworld);
+        
         // Log status periodically based on logging settings
         int logInterval = FlowingFluidsOptimizationConfig.enableDetailedLogging.get() ? 100 : 200;
         if (server.getTickCount() % logInterval == 0) {
