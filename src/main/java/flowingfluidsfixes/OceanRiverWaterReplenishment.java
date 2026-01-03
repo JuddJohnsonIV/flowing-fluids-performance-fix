@@ -818,7 +818,7 @@ public class OceanRiverWaterReplenishment {
                 
                 // Particle velocity toward ocean with minimal upward movement
                 double velX = (flowDirection.getX() / length) * 0.05 + (RANDOM.nextDouble() - 0.5) * 0.02;
-                double velY = 0.02 + RANDOM.nextDouble() * 0.01; // Minimal upward bias
+                double velY = 0.02 + RANDOM.nextDouble() * 0.01; // Minimal upward bias for bubbles
                 double velZ = (flowDirection.getZ() / length) * 0.05 + (RANDOM.nextDouble() - 0.5) * 0.02;
                 
                 // Send bubble particle with short lifetime
@@ -918,13 +918,10 @@ public class OceanRiverWaterReplenishment {
             return;
         }
         
-        // Only process every 2 ticks to reduce particle spam
-        if (level.getGameTime() % 2 != 0) {
-            return;
-        }
+        // Process every tick to increase particle visibility
         
         int particlesSpawned = 0;
-        int maxParticlesPerTick = 100; // Limit particles per tick
+        int maxParticlesPerTick = 200; // Increased limit for more particles
         
         for (var player : level.players()) {
             if (particlesSpawned >= maxParticlesPerTick) break;
@@ -949,8 +946,8 @@ public class OceanRiverWaterReplenishment {
                         // Only process flowing water (not source blocks)
                         if (!fluidState.is(Fluids.FLOWING_WATER)) continue;
                         
-                        // Random chance to spawn particle at this location (5%)
-                        if (RANDOM.nextFloat() > 0.05f) continue;
+                        // Increased chance to spawn particle at this location (15% from 5%)
+                        if (RANDOM.nextFloat() > 0.15f) continue;
                         
                         // Get flow direction from fluid state
                         int fluidLevel = fluidState.getAmount();
