@@ -916,7 +916,93 @@ public class OceanRiverWaterReplenishment {
                     }
                 }
             }
+            
+            // NEW: Process water-to-air drainage points for enhanced bubble effects
+            particlesSpawned += processWaterToAirDrainageBubbles(level, playerPos, maxParticlesPerTick - particlesSpawned);
         }
+    }
+    
+    /**
+     * ENHANCED WATER-TO-AIR DRAINAGE BUBBLES
+     * 
+     * Detects water blocks that are actively draining into air pockets and spawns
+     * bubbles at the drainage points with realistic velocity and direction.
+     * This creates visible bubble streams showing exactly where water is flowing.
+     * 
+     * @return Number of bubbles spawned
+     */
+    private static int processWaterToAirDrainageBubbles(ServerLevel level, BlockPos playerPos, int maxBubbles) {
+        int bubblesSpawned = 0;
+        int radius = 24; // Focused radius for drainage detection
+        
+        for (int dx = -radius; dx <= radius && bubblesSpawned < maxBubbles; dx += 1) { // Single block precision
+            for (int dz = -radius; dz <= radius && bubblesSpawned < maxBubbles; dz += 1) {
+                for (int dy = -8; dy <= 4; dy++) {
+                    BlockPos checkPos = new BlockPos(
+                        playerPos.getX() + dx, 
+                        playerPos.getY() + dy, 
+                        playerPos.getZ() + dz
+                    );
+                    
+                    if (!level.isLoaded(checkPos)) continue;
+                    if (playerPos.distManhattan(checkPos) > 16) continue; // Closer range for drainage bubbles
+                    
+                    FluidState fluidState = level.getFluidState(checkPos);
+                    
+                    // Check for water blocks that could be draining
+                    if (fluidState.is(Fluids.WATER) || fluidState.is(Fluids.FLOWING_WATER)) {
+                        // Check all adjacent blocks for air pockets (drainage destinations)
+                        for (Direction dir : Direction.values()) {
+                            BlockPos adjacent = checkPos.relative(dir);
+                            if (!level.isLoaded(adjacent)) continue;
+                            
+                            FluidState adjacentFluid = level.getFluidState(adjacent);
+                            
+                            // FOUND: Water draining into air pocket
+                            if (adjacentFluid.isEmpty()) {
+                                // Calculate drainage velocity based on direction and fluid level
+                                double velX = dir.getStepX() * 0.15; // Stronger velocity for drainage
+                                double velY = dir.getStepY() * 0.15;
+                                double velZ = dir.getStepZ() * 0.15;
+                                
+                                // Add randomness for natural movement
+                                velX += (RANDOM.nextDouble() - 0.5) * 0.05;
+                                velY += (RANDOM.nextDouble() - 0.5) * 0.05;
+                                velZ += (RANDOM.nextDouble() - 0.5) * 0.05;
+                                
+                                // Spawn multiple bubbles at drainage point
+                                int bubbleCount = fluidState.isSource() ? 2 : 3; // More bubbles for flowing water
+                                
+                                for (int i = 0; i < bubbleCount && bubblesSpawned < maxBubbles; i++) {
+                                    // Spawn bubbles at the water-air interface
+                                    double particleX = checkPos.getX() + 0.5 + dir.getStepX() * 0.3;
+                                    double particleY = checkPos.getY() + 0.5 + dir.getStepY() * 0.3;
+                                    double particleZ = checkPos.getZ() + 0.5 + dir.getStepZ() * 0.3;
+                                    
+                                    // Add slight offset for variety
+                                    particleX += (RANDOM.nextDouble() - 0.5) * 0.2;
+                                    particleY += (RANDOM.nextDouble() - 0.5) * 0.2;
+                                    particleZ += (RANDOM.nextDouble() - 0.5) * 0.2;
+                                    
+                                    // Send bubble particle with drainage velocity
+                                    level.sendParticles(
+                                        ParticleTypes.BUBBLE,
+                                        particleX, particleY, particleZ,
+                                        1,
+                                        velX, velY, velZ,
+                                        0.1 // Slightly larger speed multiplier for visibility
+                                    );
+                                    
+                                    bubblesSpawned++;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        return bubblesSpawned;
     }
     
     /**
