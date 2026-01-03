@@ -704,8 +704,8 @@ public class OceanRiverWaterReplenishment {
             BlockPos playerPos = player.blockPosition();
             int radius = 128; // Massive radius to cover entire visible area
             
-            // Scan multiple Y levels above sea level to catch all thin layers
-            for (int worldY = SEA_LEVEL + 1; worldY <= SEA_LEVEL + 3; worldY++) {
+            // Scan only Y=64-65 (just above sea level) where thin runoff layers sit
+            for (int worldY = SEA_LEVEL + 1; worldY <= SEA_LEVEL + 2; worldY++) {
                 for (int dx = -radius; dx <= radius && evaporated < maxPerTick; dx++) {
                     for (int dz = -radius; dz <= radius && evaporated < maxPerTick; dz++) {
                         BlockPos checkPos = new BlockPos(
