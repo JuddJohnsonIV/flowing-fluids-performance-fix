@@ -13,8 +13,8 @@ apply plugin: 'eclipse'
 apply plugin: 'maven-publish'
 
 group = 'com.example'
-version = '1.0.3'
-archivesBaseName = 'flowingfluidsfixes-1.0.3'
+version = '1.0.4'
+archivesBaseName = 'flowingfluidsfixes-1.0.4'
 
 java {
     toolchain {
