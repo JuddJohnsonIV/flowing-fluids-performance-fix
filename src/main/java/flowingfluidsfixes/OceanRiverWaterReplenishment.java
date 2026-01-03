@@ -918,21 +918,24 @@ public class OceanRiverWaterReplenishment {
             return;
         }
         
-        // Process every tick to increase particle visibility
+        // Process every 3 ticks to reduce particle spam and performance impact
+        if (level.getGameTime() % 3 != 0) {
+            return;
+        }
         
         int particlesSpawned = 0;
-        int maxParticlesPerTick = 200; // Increased limit for more particles
+        int maxParticlesPerTick = 50; // Reduced limit to minimize performance impact
         
         for (var player : level.players()) {
             if (particlesSpawned >= maxParticlesPerTick) break;
             
             BlockPos playerPos = player.blockPosition();
-            int radius = 32; // Check nearby area for flowing water
+            int radius = 24; // Reduced radius to check fewer blocks
             
             // Scan for flowing water near player
-            for (int dx = -radius; dx <= radius && particlesSpawned < maxParticlesPerTick; dx += 2) {
-                for (int dz = -radius; dz <= radius && particlesSpawned < maxParticlesPerTick; dz += 2) {
-                    for (int dy = -10; dy <= 5; dy++) {
+            for (int dx = -radius; dx <= radius && particlesSpawned < maxParticlesPerTick; dx += 3) { // Increased step to reduce checks
+                for (int dz = -radius; dz <= radius && particlesSpawned < maxParticlesPerTick; dz += 3) { // Increased step to reduce checks
+                    for (int dy = -8; dy <= 4; dy++) { // Reduced vertical range
                         BlockPos checkPos = new BlockPos(
                             playerPos.getX() + dx, 
                             playerPos.getY() + dy, 
@@ -946,8 +949,8 @@ public class OceanRiverWaterReplenishment {
                         // Only process flowing water (not source blocks)
                         if (!fluidState.is(Fluids.FLOWING_WATER)) continue;
                         
-                        // Increased chance to spawn particle at this location (15% from 5%)
-                        if (RANDOM.nextFloat() > 0.15f) continue;
+                        // Reduced chance to spawn particle at this location (3% from 15%)
+                        if (RANDOM.nextFloat() > 0.03f) continue;
                         
                         // Get flow direction from fluid state
                         int fluidLevel = fluidState.getAmount();
