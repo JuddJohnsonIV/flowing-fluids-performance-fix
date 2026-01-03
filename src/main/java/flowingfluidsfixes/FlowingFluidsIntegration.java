@@ -159,9 +159,9 @@ public class FlowingFluidsIntegration {
      * Get Flowing Fluids custom tick delay for the fluid type
      */
     private static int getFlowingFluidsTickDelay(Fluid fluid) {
-        // Default delays based on Flowing Fluids settings - SPEED UP for faster ocean replenishment
+        // Default delays based on Flowing Fluids settings
         if (fluid.isSame(Fluids.WATER)) {
-            return 1; // Water ticks MUCH faster - reduced from 2 to 1
+            return 2; // Water ticks faster in Flowing Fluids
         } else if (fluid.isSame(Fluids.LAVA)) {
             return 10; // Lava default
         } else {

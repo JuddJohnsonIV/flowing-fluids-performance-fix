@@ -1435,16 +1435,24 @@ public class OceanRiverWaterReplenishment {
                     FluidState fluidState = level.getFluidState(checkPos);
                     BlockState blockState = level.getBlockState(checkPos);
                     
-                    // INSTANT SURFACE RESTORATION: Bypass queue system for true 1-tick replenishment
-                    // This directly fills ocean surface blocks without going through the queue
+                    // POST-DRAINAGE RESTORATION: Add water blocks above low-level water to raise surface to sea level
+                    // This addresses stagnant water below sea level after drainage stops
                     if (blockState.isAir() || (fluidState.is(Fluids.FLOWING_WATER) && !fluidState.isSource())) {
-                        // DIRECT FILL: Place full source block immediately for Y=62.5 surface
-                        level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
-                        filled++;
-                        
-                        // DEBUG: Log every 50 fills to see if method is working
-                        if (filled % 50 == 0) {
-                            LOGGER.warn("ULTRA-INSTANT DIRECT FILL: filled {} blocks so far at {}", filled, checkPos);
+                        // Check if there's water below that needs surface restoration
+                        BlockPos belowPos = checkPos.below();
+                        if (level.isLoaded(belowPos)) {
+                            FluidState belowFluid = level.getFluidState(belowPos);
+                            // If there's water below (stagnant after drainage), fill this block to raise surface
+                            if (belowFluid.is(Fluids.WATER) || belowFluid.is(Fluids.FLOWING_WATER)) {
+                                // DIRECT FILL: Place full source block to raise surface toward Y=62.5
+                                level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
+                                filled++;
+                                
+                                // DEBUG: Log every 50 fills to see if method is working
+                                if (filled % 50 == 0) {
+                                    LOGGER.warn("POST-DRAINAGE RESTORATION: filled {} blocks to raise surface at {} (Y={})", filled, checkPos, worldY);
+                                }
+                            }
                         }
                     }
                     }
