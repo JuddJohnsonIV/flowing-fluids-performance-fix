@@ -689,27 +689,27 @@ public class OceanRiverWaterReplenishment {
             return;
         }
         
-        // Only process every 2 ticks to reduce overhead
-        if (level.getGameTime() % 2 != 0) {
-            return;
-        }
+        // Process every tick for immediate absorption
+        // if (level.getGameTime() % 2 != 0) {
+        //     return;
+        // }
         
         int evaporated = 0;
-        int maxPerTick = 500; // Moderate amount per tick to avoid lag
+        int maxPerTick = 2000; // Very aggressive - process as many as possible
         
         for (var player : level.players()) {
             if (evaporated >= maxPerTick) break;
             
             BlockPos playerPos = player.blockPosition();
-            int radius = 64; // Reasonable radius
+            int radius = 96; // Large radius to catch all ocean surface water
             
             // ONLY scan at Y=64 (one block above sea level) - this is where the problem layer sits
             int surfaceY = SEA_LEVEL + 1; // Y=64
             
             for (int dx = -radius; dx <= radius && evaporated < maxPerTick; dx++) {
                 for (int dz = -radius; dz <= radius && evaporated < maxPerTick; dz++) {
-                    // Random chance to check this position - makes evaporation unpredictable
-                    if (RANDOM.nextFloat() > 0.15f) continue; // Only 15% chance to check each block
+                    // Check every position for immediate absorption
+                    // if (RANDOM.nextFloat() > 0.15f) continue; // Only 15% chance to check each block
                     
                     BlockPos checkPos = new BlockPos(
                         playerPos.getX() + dx, 
@@ -735,14 +735,14 @@ public class OceanRiverWaterReplenishment {
                     if (belowFluid.is(Fluids.WATER) && belowFluid.isSource()) {
                         // Verify we're in ocean/river biome
                         if (BiomeOptimization.isOceanOrRiverBiome(level, belowPos)) {
-                            // Random evaporation chance based on fluid level
-                            // Thinner layers evaporate faster
+                            // Immediate absorption - very high chance for all thin layers
+                            // Thinner layers absorb faster
                             float evapChance = switch (fluidLevel) {
-                                case 1 -> 0.90f; // 90% chance for level 1
-                                case 2 -> 0.70f; // 70% chance for level 2
-                                case 3 -> 0.50f; // 50% chance for level 3
-                                case 4 -> 0.30f; // 30% chance for level 4
-                                default -> 0.20f;
+                                case 1 -> 1.0f;  // 100% chance for level 1
+                                case 2 -> 0.95f; // 95% chance for level 2
+                                case 3 -> 0.90f; // 90% chance for level 3
+                                case 4 -> 0.85f; // 85% chance for level 4
+                                default -> 0.80f;
                             };
                             
                             if (RANDOM.nextFloat() < evapChance) {
