@@ -51,7 +51,7 @@ public class FluidTickScheduler {
     private static final Map<BlockPos, BlockPos> fluidChangeOrigins = new ConcurrentHashMap<>();
     
     // Adaptive throttling based on server performance
-    private static volatile int adaptiveMaxUpdatesPerTick = 200; // Reduced from 800 for aggressive throttling
+    private static volatile int adaptiveMaxUpdatesPerTick = 400; // Increased to support water transportation
     private static volatile double lastKnownTPS = 20.0;
     
     // TIME BUDGET SYSTEM - Dynamic limit on fluid processing time per tick
@@ -594,17 +594,8 @@ public class FluidTickScheduler {
     private static boolean canFluidFlowAnywhere(ServerLevel level, BlockPos pos, FluidState state) {
         if (state.isEmpty()) return false;
         
-        // Check downward flow
-        if (canFluidFlowDownward(level, pos, state)) {
-            return true;
-        }
-        
-        // Check horizontal flow
-        if (canFluidFlowHorizontally(level, pos, state)) {
-            return true;
-        }
-        
-        return false;
+        // Check if fluid can flow in any direction
+        return canFluidFlowDownward(level, pos, state) || canFluidFlowHorizontally(level, pos, state);
     }
     
     /**
@@ -797,10 +788,16 @@ public class FluidTickScheduler {
         // Never defer critical updates
         if (priority == UpdatePriority.CRITICAL) return false;
         
-        // VERY AGGRESSIVE DEFERRAL: Defer almost everything under any load
+        // BALANCED DEFERRAL: Allow 10% of updates to maintain water transportation
         if (lastKnownTPS < 19.0) {
-            // Only process HIGH priority updates, defer everything else
-            return priority != UpdatePriority.HIGH;
+            // Process HIGH priority updates, defer 90% of NORMAL updates
+            if (priority == UpdatePriority.HIGH) return false;
+            if (priority == UpdatePriority.NORMAL) {
+                // Allow 10% of NORMAL updates through (90% deferral)
+                return Math.random() < 0.9;
+            }
+            // Defer LOW priority updates
+            return true;
         }
         
         // Check if we've hit the adaptive limit

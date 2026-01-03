@@ -1,20 +1,14 @@
 package flowingfluidsfixes;
 
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for FluidOptimizer functionality.
  * These tests verify basic logic without requiring Minecraft runtime dependencies.
  */
 public class FluidOptimizerTest {
-
-    @BeforeEach
-    void setUp() {
-        // Setup runs before each test
-    }
 
     @Test
     void testConstantsAreValid() {
