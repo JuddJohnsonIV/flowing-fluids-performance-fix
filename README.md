@@ -18,7 +18,6 @@ A Minecraft Forge mod that optimizes the FLOWING FLUIDS mod by TRABEN to fix per
 - Processes fluid updates in chunks to prevent CPU overload
 - Reduces server tick lag when thousands of blocks change simultaneously
 - Prevents time-of-day going backwards and mob movement stuttering
-- Handles 40,000+ fluid updates per tick smoothly
 
 ### Advanced Fluid Flow
 - Realistic fluid physics with pressure and gravity simulation
