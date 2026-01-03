@@ -1375,13 +1375,13 @@ public class OceanRiverWaterReplenishment {
         
         // NO TICK THROTTLING - process every single tick for instant response
         int filled = 0;
-        int maxPerTick = 100000; // DOUBLED capacity - no limits on ocean surface restoration
+        int maxPerTick = 5000; // Aggressive but reasonable capacity
         
         for (var player : level.players()) {
             if (filled >= maxPerTick) break;
             
             BlockPos playerPos = player.blockPosition();
-            int radius = 80; // Very large radius to catch expanding dips early
+            int radius = 40; // Reasonable radius to cover ocean surface around player
             
             // FOCUS ON Y=62 and Y=63 - exact water surface restoration to achieve Y=62.5
             for (int worldY = SEA_LEVEL - 1; worldY <= SEA_LEVEL; worldY++) { // Y=62 and Y=63 only
@@ -1395,31 +1395,47 @@ public class OceanRiverWaterReplenishment {
                     
                     if (!level.isLoaded(checkPos)) continue;
                     
-                    // OCEAN-TOUCHING WATER: Check if this water is connected to ocean biome water
-                    // This creates vanilla-like water flow from ocean into adjacent areas
+                    // SMART LIMITING: Prevent expanding ring by only processing connected ocean water
                     boolean shouldFill = false;
                     boolean isInOceanBiome = BiomeOptimization.isOceanOrRiverBiome(level, checkPos);
                     
                     if (isInOceanBiome) {
-                        shouldFill = true; // Direct ocean biome water - always fill
+                        // In ocean biome: Check if this area has significant ocean water nearby
+                        int oceanWaterCount = 0;
+                        for (Direction dir : Direction.values()) {
+                            BlockPos neighbor = checkPos.relative(dir);
+                            if (level.isLoaded(neighbor)) {
+                                FluidState neighborFluid = level.getFluidState(neighbor);
+                                if (neighborFluid.is(Fluids.WATER) && neighborFluid.isSource()) {
+                                    oceanWaterCount++;
+                                }
+                            }
+                        }
+                        // Only fill if there are 2+ ocean source blocks nearby (prevents expanding ring)
+                        if (oceanWaterCount >= 2) {
+                            shouldFill = true;
+                        }
                     } else {
-                        // Check if touching ocean biome water (vanilla-like flow)
+                        // Outside ocean biome: Only fill if directly touching ocean biome water
                         for (Direction dir : Direction.values()) {
                             BlockPos neighbor = checkPos.relative(dir);
                             if (level.isLoaded(neighbor)) {
                                 FluidState neighborFluid = level.getFluidState(neighbor);
                                 if (neighborFluid.is(Fluids.WATER) || neighborFluid.is(Fluids.FLOWING_WATER)) {
-                                    // Check if neighbor is in ocean biome
+                                    // Check if neighbor is in ocean biome AND is source water
                                     if (BiomeOptimization.isOceanOrRiverBiome(level, neighbor)) {
-                                        shouldFill = true;
-                                        break;
+                                        FluidState oceanNeighborFluid = level.getFluidState(neighbor);
+                                        if (oceanNeighborFluid.isSource()) {
+                                            shouldFill = true;
+                                            break;
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                     
-                    // Only fill ocean biome water OR water touching ocean biome water
+                    // Only fill if conditions are met
                     if (!shouldFill) continue;
                     
                     FluidState fluidState = level.getFluidState(checkPos);
@@ -1433,9 +1449,9 @@ public class OceanRiverWaterReplenishment {
                         level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
                         filled++;
                         
-                        // DEBUG: Log every 100 fills to see progress
-                        if (filled % 100 == 0) {
-                            LOGGER.info("Ultra-instant ocean leveling: filled {} blocks so far", filled);
+                        // DEBUG: Log every 10 fills to see if method is working
+                        if (filled % 10 == 0) {
+                            LOGGER.warn("ULTRA-INSTANT METHOD WORKING: filled {} blocks so far at {}", filled, checkPos);
                         }
                     }
                     }
