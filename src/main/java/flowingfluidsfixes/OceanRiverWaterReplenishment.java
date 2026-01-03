@@ -11,11 +11,16 @@ import org.apache.logging.log4j.Logger;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.util.RandomSource;
+import net.minecraft.core.Vec3i;
 
 /**
  * Handles accelerated water replenishment ONLY in ocean and river biomes.
@@ -512,8 +517,14 @@ public class OceanRiverWaterReplenishment {
     }
     
     /**
-     * Enhanced rain water detection system to completely eliminate floating water
-     * This method is called more frequently during rain to catch floating water immediately
+     * Process rain water removal - called each tick.
+     * ENHANCED: Now aggressively removes rain water and processes more blocks per tick.
+     * 
+     * Processes water that:
+     * 1. Is ABOVE the ocean surface (Y > 63)
+     * 2. Has ocean/river water directly below
+     * 3. Rain water drains IMMEDIATELY
+     * 4. Normal water drains after 1 second (was 3 seconds)
      */
     public static void processRainWaterRemoval(ServerLevel level) {
         if (!enabled || !level.isRaining()) {
@@ -741,6 +752,12 @@ public class OceanRiverWaterReplenishment {
                                 // This mimics how real ocean water absorbs runoff instantly
                                 level.setBlock(checkPos, Blocks.AIR.defaultBlockState(), 3);
                                 evaporated++;
+                                
+                                // Add bubble particles to show water flow direction
+                                // Only show particles occasionally to avoid spam
+                                if (RANDOM.nextFloat() < 0.1f) { // 10% chance for particles
+                                    createFlowParticles(level, checkPos, belowPos);
+                                }
                             }
                         }
                     }
@@ -750,6 +767,51 @@ public class OceanRiverWaterReplenishment {
         
         if (evaporated > 0) {
             LOGGER.debug("Random evaporation: removed {} thin water layers from ocean surface", evaporated);
+        }
+    }
+    
+    /**
+     * Create bubble particles showing water flow direction when draining
+     */
+    private static void createFlowParticles(ServerLevel level, BlockPos waterPos, BlockPos oceanPos) {
+        // Calculate flow direction (from water to ocean)
+        Vec3i flowDirection = new Vec3i(
+            oceanPos.getX() - waterPos.getX(),
+            oceanPos.getY() - waterPos.getY(), 
+            oceanPos.getZ() - waterPos.getZ()
+        );
+        
+        // Normalize and scale the direction
+        double length = Math.sqrt(flowDirection.getX() * flowDirection.getX() + 
+                                flowDirection.getY() * flowDirection.getY() + 
+                                flowDirection.getZ() * flowDirection.getZ());
+        
+        if (length > 0) {
+            // Create sparse bubble particles flowing toward ocean
+            for (int i = 0; i < 3; i++) { // 3 particles per event
+                double offsetX = (RANDOM.nextDouble() - 0.5) * 0.5;
+                double offsetZ = (RANDOM.nextDouble() - 0.5) * 0.5;
+                double offsetY = RANDOM.nextDouble() * 0.3;
+                
+                // Particle position with some randomness
+                double particleX = waterPos.getX() + 0.5 + offsetX;
+                double particleY = waterPos.getY() + offsetY;
+                double particleZ = waterPos.getZ() + 0.5 + offsetZ;
+                
+                // Particle velocity toward ocean with some randomness
+                double velX = (flowDirection.getX() / length) * 0.1 + (RANDOM.nextDouble() - 0.5) * 0.05;
+                double velY = 0.05 + RANDOM.nextDouble() * 0.03; // Slight upward bias
+                double velZ = (flowDirection.getZ() / length) * 0.1 + (RANDOM.nextDouble() - 0.5) * 0.05;
+                
+                // Send bubble particle to all nearby players
+                level.sendParticles(
+                    ParticleTypes.BUBBLE,
+                    particleX, particleY, particleZ,
+                    1, // count
+                    velX, velY, velZ,
+                    0.01 // speed multiplier
+                );
+            }
         }
     }
 }
