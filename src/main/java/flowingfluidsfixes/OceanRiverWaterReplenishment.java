@@ -875,6 +875,9 @@ public class OceanRiverWaterReplenishment {
                         // Only process flowing water (not source blocks)
                         if (!fluidState.is(Fluids.FLOWING_WATER)) continue;
                         
+                        // Check if player is nearby (within 16 blocks) for particle spawning
+                        if (playerPos.distManhattan(checkPos) > 16) continue;
+                        
                         // Higher chance for actively flowing water (based on fluid level)
                         int fluidLevel = fluidState.getAmount();
                         float spawnChance = fluidLevel > 4 ? 0.08f : 0.05f; // Higher chance for faster flow
