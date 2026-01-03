@@ -1,5 +1,14 @@
 package flowingfluidsfixes;
 
+import java.util.Map;
+import java.util.Random;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
@@ -7,14 +16,6 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-
-import java.util.Map;
-import java.util.Random;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
  * Handles accelerated water replenishment ONLY in ocean and river biomes.
@@ -708,9 +709,6 @@ public class OceanRiverWaterReplenishment {
             
             for (int dx = -radius; dx <= radius && evaporated < maxPerTick; dx++) {
                 for (int dz = -radius; dz <= radius && evaporated < maxPerTick; dz++) {
-                    // Check every position for immediate absorption
-                    // if (RANDOM.nextFloat() > 0.15f) continue; // Only 15% chance to check each block
-                    
                     BlockPos checkPos = new BlockPos(
                         playerPos.getX() + dx, 
                         surfaceY, 
