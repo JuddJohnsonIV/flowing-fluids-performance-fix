@@ -60,11 +60,11 @@ public class OceanRiverWaterReplenishment {
     private static float riverReplenishRate = 0.80f; // Very fast - 80% chance for rivers
     private static int maxReplenishmentsPerTick = 500; // Reduced from 1000 to limit processing load
     private static boolean enabled = true;
-    private static final int shoreWaterLevelingRadius = 32; // Reduced radius for shore water leveling
-    private static final int rainWaterRemovalRadius = 40; // Reduced radius for rain water removal
-    private static final int thinLayerLevelingRadius = 24; // Reduced radius for thin layer leveling
-    private static final int oceanSurfaceEvaporationRadius = 64; // Reduced radius for evaporation
-    private static final int oceanSurfaceFillingRadius = 32; // Reduced radius for direct filling
+    private static final int SHORE_WATER_LEVELING_RADIUS = 32; // Reduced radius for shore water leveling
+    private static final int RAIN_WATER_REMOVAL_RADIUS = 40; // Reduced radius for rain water removal
+    private static final int THIN_LAYER_LEVELING_RADIUS = 24; // Reduced radius for thin layer leveling
+    private static final int OCEAN_SURFACE_EVAPORATION_RADIUS = 64; // Reduced radius for evaporation
+    private static final int OCEAN_SURFACE_FILLING_RADIUS = 32; // Reduced radius for direct filling
     
     /**
      * Check if a position is eligible for water replenishment.
@@ -525,7 +525,7 @@ public class OceanRiverWaterReplenishment {
             if (drained >= maxPerTick) break;
             
             BlockPos playerPos = player.blockPosition();
-            int radius = level.isRaining() ? shoreWaterLevelingRadius + 8 : shoreWaterLevelingRadius; // Slightly larger during rain
+            int radius = level.isRaining() ? SHORE_WATER_LEVELING_RADIUS + 8 : SHORE_WATER_LEVELING_RADIUS; // Slightly larger during rain
             
             // Scan ABOVE sea level with reduced coverage
             int maxY = level.isRaining() ? SEA_LEVEL + 10 : SEA_LEVEL + 8;
@@ -589,7 +589,7 @@ public class OceanRiverWaterReplenishment {
             if (removed >= maxPerTick) break;
             
             BlockPos playerPos = player.blockPosition();
-            int radius = rainWaterRemovalRadius; // Reduced radius to focus on nearby areas
+            int radius = RAIN_WATER_REMOVAL_RADIUS; // Reduced radius to focus on nearby areas
             
             // Scan for ANY floating water sources during rain with reduced range
             for (int dx = -radius; dx <= radius; dx += 2) { // Increased step to reduce checks
@@ -696,7 +696,7 @@ public class OceanRiverWaterReplenishment {
             if (processed >= maxPerTick) break;
             
             BlockPos playerPos = player.blockPosition();
-            int radius = thinLayerLevelingRadius; // Reduced radius for processing
+            int radius = THIN_LAYER_LEVELING_RADIUS; // Reduced radius for processing
             
             // Focus on thin layers just above sea level
             for (int dx = -radius; dx <= radius && processed < maxPerTick; dx += 2) { // Increased step to reduce checks
@@ -757,7 +757,7 @@ public class OceanRiverWaterReplenishment {
             if (evaporated >= maxPerTick) break;
             
             BlockPos playerPos = player.blockPosition();
-            int radius = oceanSurfaceEvaporationRadius; // Reduced radius to focus on nearby areas
+            int radius = OCEAN_SURFACE_EVAPORATION_RADIUS; // Reduced radius to focus on nearby areas
             
             // Scan Y=63-64 to catch thin layers at sea level and just above
             for (int worldY = SEA_LEVEL; worldY <= SEA_LEVEL + 1; worldY++) {
@@ -1042,7 +1042,7 @@ public class OceanRiverWaterReplenishment {
             if (filled >= maxPerTick) break;
             
             BlockPos playerPos = player.blockPosition();
-            int radius = oceanSurfaceFillingRadius; // Use configured radius for direct filling
+            int radius = OCEAN_SURFACE_FILLING_RADIUS; // Use configured radius for direct filling
             
             // Check multiple Y levels around sea level (62-65) to catch missing layers
             for (int worldY = SEA_LEVEL - 1; worldY <= SEA_LEVEL + 2; worldY++) {

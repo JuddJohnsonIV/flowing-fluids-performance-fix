@@ -4,8 +4,8 @@ license="All Rights Reserved"
 
 [[mods]]
 modId="flowingfluidsfixes"
-version="1.2.0"
-displayName="FlowingFluidsFixes1.2"
+version="1.2.1"
+displayName="FlowingFluidsFixes1.2.1"
 credits="Thanks to Traben for Flowing Fluids"
 authors="FlowingFluidsFixes"
 description='''Optimizes fluid updates for better performance without using mixins.'''
