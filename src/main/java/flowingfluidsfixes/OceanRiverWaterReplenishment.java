@@ -50,9 +50,9 @@ public class OceanRiverWaterReplenishment {
     private static final int MAX_DRAIN_CANDIDATES = 5000;
     
     // Configuration values (can be modified via config)
-    private static float oceanReplenishRate = 0.40f; // Increased from 0.15f for faster merging
-    private static float riverReplenishRate = 0.30f; // Increased from 0.10f for faster merging
-    private static int maxReplenishmentsPerTick = 100; // Increased from 50 for faster processing
+    private static float oceanReplenishRate = 0.20f; // Reduced from 0.40f to allow natural leveling
+    private static float riverReplenishRate = 0.15f; // Reduced from 0.30f to allow natural leveling
+    private static int maxReplenishmentsPerTick = 50; // Reduced from 100 to reduce interference
     private static boolean enabled = true;
     
     /**
@@ -403,9 +403,9 @@ public class OceanRiverWaterReplenishment {
             return false;
         }
         
-        // Check if enough time has passed (reduced from 60 to 20 ticks for faster drainage)
+        // Check if enough time has passed (reduced from 20 to 10 ticks for faster drainage)
         long ticksWaiting = currentTick - candidate.firstSeenTick();
-        return ticksWaiting >= 20; // 1 second instead of 3 seconds
+        return ticksWaiting >= 10; // 0.5 seconds instead of 1 second
     }
     
     /**
@@ -455,7 +455,7 @@ public class OceanRiverWaterReplenishment {
         long currentTick = level.getGameTime();
         int drained = 0;
         int tracked = 0;
-        int maxPerTick = 500; // Increased from 300 for aggressive rain water removal
+        int maxPerTick = 800; // Increased from 500 for more aggressive thin layer removal
         
         // Clean up stale entries more frequently during rain (every 100 ticks)
         int cleanupInterval = level.isRaining() ? 100 : 200;
@@ -471,9 +471,9 @@ public class OceanRiverWaterReplenishment {
             int radius = level.isRaining() ? 64 : 48; // Larger radius during rain
             
             // Scan ABOVE sea level with larger range during rain
-            int maxY = level.isRaining() ? SEA_LEVEL + 15 : SEA_LEVEL + 10;
-            for (int dx = -radius; dx <= radius && drained < maxPerTick; dx += 2) {
-                for (int dz = -radius; dz <= radius && drained < maxPerTick; dz += 2) {
+            int maxY = level.isRaining() ? SEA_LEVEL + 15 : SEA_LEVEL + 8;
+            for (int dx = -radius; dx <= radius && drained < maxPerTick; dx += 1) { // Reduced step from 2 to 1
+                for (int dz = -radius; dz <= radius && drained < maxPerTick; dz += 1) { // Reduced step from 2 to 1
                     for (int worldY = SEA_LEVEL + 1; worldY <= maxY; worldY++) {
                         BlockPos checkPos = new BlockPos(
                             playerPos.getX() + dx, 
@@ -518,7 +518,6 @@ public class OceanRiverWaterReplenishment {
             return;
         }
         
-        long currentTick = level.getGameTime();
         int removed = 0;
         int maxPerTick = 1000; // Very aggressive during rain
         
@@ -607,12 +606,64 @@ public class OceanRiverWaterReplenishment {
             }
             
             // Remove if tracked for too long (10 seconds = 200 ticks) without draining
-            if (currentTick - candidate.firstSeenTick() > 200) {
-                return true;
-            }
-            
-            return false;
+            return currentTick - candidate.firstSeenTick() > 200;
         });
+    }
+    
+    /**
+     * Special handling for thin layers (level 1-3) near ocean surface.
+     * This method is called more frequently to ensure thin layers level off quickly.
+     */
+    public static void processThinLayerLeveling(ServerLevel level) {
+        if (!enabled || !FlowingFluidsIntegration.isFlowingFluidsLoaded()) {
+            return;
+        }
+        
+        long currentTick = level.getGameTime();
+        int processed = 0;
+        int maxPerTick = 1200; // Very aggressive for thin layers
+        
+        // Only process every 4 ticks to balance performance
+        if (currentTick % 4 != 0) {
+            return;
+        }
+        
+        for (var player : level.players()) {
+            if (processed >= maxPerTick) break;
+            
+            BlockPos playerPos = player.blockPosition();
+            int radius = 32; // Smaller radius but more frequent
+            
+            // Focus on thin layers just above sea level
+            for (int dx = -radius; dx <= radius && processed < maxPerTick; dx += 1) {
+                for (int dz = -radius; dz <= radius && processed < maxPerTick; dz += 1) {
+                    for (int worldY = SEA_LEVEL - 1; worldY <= SEA_LEVEL + 3; worldY++) {
+                        BlockPos checkPos = new BlockPos(
+                            playerPos.getX() + dx, 
+                            worldY, 
+                            playerPos.getZ() + dz
+                        );
+                        
+                        if (!level.isLoaded(checkPos)) continue;
+                        
+                        FluidState fluidState = level.getFluidState(checkPos);
+                        if (fluidState.isEmpty()) continue;
+                        
+                        // Focus on thin layers (1-3) that are causing lag
+                        if (!fluidState.isSource() && fluidState.getAmount() <= 3) {
+                            // Check if this thin layer should drain into ocean below
+                            if (drainIntoOcean(level, checkPos, fluidState, currentTick)) {
+                                processed++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        if (processed > 0) {
+            LOGGER.debug("Processed {} thin layer leveling operations", processed);
+        }
     }
     
     /**

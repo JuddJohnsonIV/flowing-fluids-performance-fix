@@ -78,9 +78,9 @@ public class FluidTickScheduler {
     
     // EDGE FLUID TRACKING - Track edge fluids (level 1-2) that rarely flow
     private static final Map<BlockPos, EdgeFluidEntry> edgeFluidCache = new ConcurrentHashMap<>();
-    private static final int EDGE_SKIP_THRESHOLD = 1; // Skip after just 1 stable check (aggressive)
-    private static final int DORMANT_THRESHOLD = 3; // Go dormant after 3 stable checks (faster dormancy)
-    private static final long DORMANT_RECHECK_INTERVAL = 400; // Only recheck dormant fluids every 20 seconds
+    private static final int EDGE_SKIP_THRESHOLD = 3; // Require more stable checks before skipping (was 1)
+    private static final int DORMANT_THRESHOLD = 8; // Require more checks before going dormant (was 3)
+    private static final long DORMANT_RECHECK_INTERVAL = 100; // Recheck dormant fluids more frequently (was 400)
     private static final AtomicInteger edgeFluidsSkipped = new AtomicInteger(0);
     private static final AtomicInteger dormantEdgeFluids = new AtomicInteger(0);
     
@@ -90,6 +90,9 @@ public class FluidTickScheduler {
     
     // Server tick tracking
     private static volatile long currentServerTick = 0;
+    
+    // Sea level constant for ocean surface detection
+    private static final int SEA_LEVEL = 63;
     
     /**
      * Reset time budget at the start of each server tick
@@ -316,7 +319,12 @@ public class FluidTickScheduler {
         // OCEAN/RIVER REPLENISHMENT: Schedule faster refill for non-source water in ocean/river biomes
         // This helps reduce lag from Flowing Fluids calculating water holes by slowly refilling them
         // IMPORTANT: Only affects ocean and river biomes - preserves finite water system elsewhere
-        if (OceanRiverWaterReplenishment.shouldAccelerateFluidTick(level, pos, state)) {
+        // CRITICAL: Skip replenishment for edge fluids (level 1-3) near ocean surface to allow natural leveling
+        if (state.getAmount() <= 3 && pos.getY() >= SEA_LEVEL - 2 && 
+            BiomeOptimization.isOceanOrRiverBiome(level, pos)) {
+            // Don't accelerate thin layers near ocean surface - let them level naturally
+            LOGGER.debug("Skipping replenishment for thin layer at {} - allowing natural leveling", pos);
+        } else if (OceanRiverWaterReplenishment.shouldAccelerateFluidTick(level, pos, state)) {
             OceanRiverWaterReplenishment.scheduleReplenishment(level, pos, state);
         }
         
@@ -420,6 +428,9 @@ public class FluidTickScheduler {
      * Aggressively skip edge fluids (level 1-2) that are unlikely to flow further
      * Enhanced with DORMANT state - thin layers stop calculating after being stable
      * and only wake up when neighbors change
+     * 
+     * EXCEPTION: Edge fluids near ocean surface (Y >= SEA_LEVEL-2 to SEA_LEVEL+3) 
+     * are processed more frequently to prevent thick layer accumulation
      */
     private static boolean shouldSkipEdgeFluid(ServerLevel level, BlockPos pos, FluidState state) {
         if (state.isEmpty() || state.isSource()) return false;
@@ -428,6 +439,13 @@ public class FluidTickScheduler {
         
         // Only skip edge fluids (level 1-2)
         if (fluidLevel > 2) return false;
+        
+        // EXCEPTION: Don't skip edge fluids near ocean surface - they need to level off
+        if (pos.getY() >= SEA_LEVEL - 2 && pos.getY() <= SEA_LEVEL + 3 &&
+            BiomeOptimization.isOceanOrRiverBiome(level, pos)) {
+            // Near ocean surface - process normally to allow leveling
+            return false;
+        }
         
         // Calculate current neighbor hash to detect changes
         int currentNeighborHash = calculateNeighborHash(level, pos, state);

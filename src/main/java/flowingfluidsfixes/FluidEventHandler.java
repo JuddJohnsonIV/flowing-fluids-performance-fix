@@ -86,6 +86,9 @@ public class FluidEventHandler {
         // should merge with ocean water level to reduce constant calculations
         OceanRiverWaterReplenishment.processShoreWaterLeveling(overworld);
         
+        // ENHANCED: Process thin layer leveling more frequently to prevent thick layer accumulation
+        OceanRiverWaterReplenishment.processThinLayerLeveling(overworld);
+        
         // ENHANCED: Aggressive rain water removal during rain to eliminate floating water
         OceanRiverWaterReplenishment.processRainWaterRemoval(overworld);
         
