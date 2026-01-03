@@ -60,11 +60,11 @@ public class OceanRiverWaterReplenishment {
     private static float riverReplenishRate = 0.80f; // Very fast - 80% chance for rivers
     private static int maxReplenishmentsPerTick = 500; // Reduced from 1000 to limit processing load
     private static boolean enabled = true;
-    private static int shoreWaterLevelingRadius = 32; // Reduced radius for shore water leveling
-    private static int rainWaterRemovalRadius = 40; // Reduced radius for rain water removal
-    private static int thinLayerLevelingRadius = 24; // Reduced radius for thin layer leveling
-    private static int oceanSurfaceEvaporationRadius = 64; // Reduced radius for evaporation
-    private static int oceanSurfaceFillingRadius = 32; // Reduced radius for direct filling
+    private static final int shoreWaterLevelingRadius = 32; // Reduced radius for shore water leveling
+    private static final int rainWaterRemovalRadius = 40; // Reduced radius for rain water removal
+    private static final int thinLayerLevelingRadius = 24; // Reduced radius for thin layer leveling
+    private static final int oceanSurfaceEvaporationRadius = 64; // Reduced radius for evaporation
+    private static final int oceanSurfaceFillingRadius = 32; // Reduced radius for direct filling
     
     /**
      * Check if a position is eligible for water replenishment.
@@ -1042,7 +1042,7 @@ public class OceanRiverWaterReplenishment {
             if (filled >= maxPerTick) break;
             
             BlockPos playerPos = player.blockPosition();
-            int radius = 64; // Large radius to cover visible ocean surface
+            int radius = oceanSurfaceFillingRadius; // Use configured radius for direct filling
             
             // Check multiple Y levels around sea level (62-65) to catch missing layers
             for (int worldY = SEA_LEVEL - 1; worldY <= SEA_LEVEL + 2; worldY++) {
@@ -1082,6 +1082,13 @@ public class OceanRiverWaterReplenishment {
     
     /**
      * Count adjacent water source blocks at the same Y level.
+     * 
+     * UTILITY METHOD: Currently unused but kept for potential future enhancements.
+     * Could be used for:
+     * - More intelligent ocean surface filling based on surrounding water density
+     * - Shore water detection and leveling algorithms
+     * - Advanced flow direction calculations
+     * - Biome-specific water behavior adjustments
      */
     private static int countAdjacentWaterSources(ServerLevel level, BlockPos pos) {
         int count = 0;
