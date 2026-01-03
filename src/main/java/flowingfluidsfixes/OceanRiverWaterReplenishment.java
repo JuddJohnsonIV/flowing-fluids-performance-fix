@@ -11,16 +11,13 @@ import org.apache.logging.log4j.Logger;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.Vec3i;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
-import net.minecraft.world.entity.player.Player;
-import net.minecraft.util.RandomSource;
-import net.minecraft.core.Vec3i;
 
 /**
  * Handles accelerated water replenishment ONLY in ocean and river biomes.
@@ -56,9 +53,9 @@ public class OceanRiverWaterReplenishment {
     private static final int MAX_DRAIN_CANDIDATES = 5000;
     
     // Configuration values (can be modified via config)
-    private static float oceanReplenishRate = 0.20f; // Reduced from 0.40f to allow natural leveling
-    private static float riverReplenishRate = 0.15f; // Reduced from 0.30f to allow natural leveling
-    private static int maxReplenishmentsPerTick = 50; // Reduced from 100 to reduce interference
+    private static float oceanReplenishRate = 0.70f; // Much faster - 70% chance per tick
+    private static float riverReplenishRate = 0.50f; // Much faster - 50% chance for rivers
+    private static int maxReplenishmentsPerTick = 400; // Much higher - 400 blocks/tick
     private static boolean enabled = true;
     
     /**
@@ -181,7 +178,11 @@ public class OceanRiverWaterReplenishment {
             }
             
             // Random chance to actually replenish this tick
-            if (RANDOM.nextFloat() > task.replenishRate()) {
+            // OCEAN: Higher chance but still gradual for visual consistency
+            // RIVER: Use normal chance for gradual refill
+            boolean isOcean = BiomeOptimization.isOceanBiome(level, taskPos);
+            float chance = isOcean ? 0.70f : task.replenishRate(); // Ocean gets 70% chance
+            if (RANDOM.nextFloat() > chance) {
                 // Re-queue for later
                 replenishmentQueue.offer(task);
                 activeReplenishment.add(taskPos);
@@ -212,21 +213,38 @@ public class OceanRiverWaterReplenishment {
         
         // If air or replaceable, place water source
         if (currentBlock.isAir() || currentBlock.canBeReplaced(Fluids.WATER)) {
+            // INSTANT REFILL: Always place full source block for immediate ocean surface restoration
             level.setBlock(pos, Blocks.WATER.defaultBlockState(), 3);
             return true;
         }
         
-        // If partially filled water, increase level toward source
+        // If partially filled water, fill faster for ocean but still gradual
         if (currentFluid.is(Fluids.FLOWING_WATER)) {
-            int currentAmount = currentFluid.getAmount();
-            int newAmount = Math.min(currentAmount + 2, 8);
+            boolean isOcean = BiomeOptimization.isOceanBiome(level, pos);
             
-            if (newAmount >= 8) {
-                level.setBlock(pos, Blocks.WATER.defaultBlockState(), 3);
+            if (isOcean) {
+                // OCEAN: Fill much faster (4 levels at a time)
+                int currentAmount = currentFluid.getAmount();
+                int newAmount = Math.min(currentAmount + 4, 8); // Much faster filling
+                
+                if (newAmount >= 8) {
+                    level.setBlock(pos, Blocks.WATER.defaultBlockState(), 3);
+                } else {
+                    level.setBlock(pos, Fluids.WATER.getFlowing(newAmount, false).createLegacyBlock(), 3);
+                }
+                return true;
             } else {
-                level.setBlock(pos, Fluids.WATER.getFlowing(newAmount, false).createLegacyBlock(), 3);
+                // RIVER: Gradual filling
+                int currentAmount = currentFluid.getAmount();
+                int newAmount = Math.min(currentAmount + 2, 8);
+                
+                if (newAmount >= 8) {
+                    level.setBlock(pos, Blocks.WATER.defaultBlockState(), 3);
+                } else {
+                    level.setBlock(pos, Fluids.WATER.getFlowing(newAmount, false).createLegacyBlock(), 3);
+                }
+                return true;
             }
-            return true;
         }
         
         return false;
