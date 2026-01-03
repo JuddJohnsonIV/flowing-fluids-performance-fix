@@ -96,6 +96,9 @@ public class FluidEventHandler {
         // ENHANCED: Aggressive rain water removal during rain to eliminate floating water
         OceanRiverWaterReplenishment.processRainWaterRemoval(overworld);
         
+        // NEW: Spawn bubble particles in flowing water to show visible underwater currents
+        OceanRiverWaterReplenishment.processUnderwaterCurrentParticles(overworld);
+        
         // Log status periodically based on logging settings
         int logInterval = FlowingFluidsOptimizationConfig.enableDetailedLogging.get() ? 100 : 200;
         if (server.getTickCount() % logInterval == 0) {

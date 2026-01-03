@@ -53,9 +53,9 @@ public class OceanRiverWaterReplenishment {
     private static final int MAX_DRAIN_CANDIDATES = 5000;
     
     // Configuration values (can be modified via config)
-    private static float oceanReplenishRate = 0.70f; // Much faster - 70% chance per tick
-    private static float riverReplenishRate = 0.50f; // Much faster - 50% chance for rivers
-    private static int maxReplenishmentsPerTick = 400; // Much higher - 400 blocks/tick
+    private static float oceanReplenishRate = 0.95f; // Ultra fast - 95% chance per tick
+    private static float riverReplenishRate = 0.80f; // Very fast - 80% chance for rivers
+    private static int maxReplenishmentsPerTick = 1000; // Ultra high - 1000 blocks/tick
     private static boolean enabled = true;
     
     /**
@@ -181,7 +181,7 @@ public class OceanRiverWaterReplenishment {
             // OCEAN: Higher chance but still gradual for visual consistency
             // RIVER: Use normal chance for gradual refill
             boolean isOcean = BiomeOptimization.isOceanBiome(level, taskPos);
-            float chance = isOcean ? 0.70f : task.replenishRate(); // Ocean gets 70% chance
+            float chance = isOcean ? 0.95f : task.replenishRate(); // Ocean gets 95% chance
             if (RANDOM.nextFloat() > chance) {
                 // Re-queue for later
                 replenishmentQueue.offer(task);
@@ -223,9 +223,9 @@ public class OceanRiverWaterReplenishment {
             boolean isOcean = BiomeOptimization.isOceanBiome(level, pos);
             
             if (isOcean) {
-                // OCEAN: Fill much faster (4 levels at a time)
+                // OCEAN: Fill extremely fast (6 levels at a time)
                 int currentAmount = currentFluid.getAmount();
-                int newAmount = Math.min(currentAmount + 4, 8); // Much faster filling
+                int newAmount = Math.min(currentAmount + 6, 8); // Ultra fast filling
                 
                 if (newAmount >= 8) {
                     level.setBlock(pos, Blocks.WATER.defaultBlockState(), 3);
@@ -831,5 +831,133 @@ public class OceanRiverWaterReplenishment {
                 );
             }
         }
+    }
+    
+    /**
+     * UNDERWATER CURRENT PARTICLES
+     * 
+     * Spawns bubble particles in flowing water to show visible underwater currents.
+     * Called frequently to create a continuous stream of particles showing flow direction.
+     */
+    public static void processUnderwaterCurrentParticles(ServerLevel level) {
+        if (!enabled) {
+            return;
+        }
+        
+        // Only process every 2 ticks to reduce particle spam
+        if (level.getGameTime() % 2 != 0) {
+            return;
+        }
+        
+        int particlesSpawned = 0;
+        int maxParticlesPerTick = 100; // Limit particles per tick
+        
+        for (var player : level.players()) {
+            if (particlesSpawned >= maxParticlesPerTick) break;
+            
+            BlockPos playerPos = player.blockPosition();
+            int radius = 32; // Check nearby area for flowing water
+            
+            // Scan for flowing water near player
+            for (int dx = -radius; dx <= radius && particlesSpawned < maxParticlesPerTick; dx += 2) {
+                for (int dz = -radius; dz <= radius && particlesSpawned < maxParticlesPerTick; dz += 2) {
+                    for (int dy = -10; dy <= 5; dy++) {
+                        BlockPos checkPos = new BlockPos(
+                            playerPos.getX() + dx, 
+                            playerPos.getY() + dy, 
+                            playerPos.getZ() + dz
+                        );
+                        
+                        if (!level.isLoaded(checkPos)) continue;
+                        
+                        FluidState fluidState = level.getFluidState(checkPos);
+                        
+                        // Only process flowing water (not source blocks)
+                        if (!fluidState.is(Fluids.FLOWING_WATER)) continue;
+                        
+                        // Random chance to spawn particle at this location (5%)
+                        if (RANDOM.nextFloat() > 0.05f) continue;
+                        
+                        // Get flow direction from fluid state
+                        int fluidLevel = fluidState.getAmount();
+                        
+                        // Find which direction the water is flowing by checking neighbors
+                        BlockPos flowTarget = findFlowDirection(level, checkPos, fluidLevel);
+                        
+                        if (flowTarget != null) {
+                            // Calculate flow vector
+                            double flowX = flowTarget.getX() - checkPos.getX();
+                            double flowY = flowTarget.getY() - checkPos.getY();
+                            double flowZ = flowTarget.getZ() - checkPos.getZ();
+                            
+                            // Normalize
+                            double flowLength = Math.sqrt(flowX * flowX + flowY * flowY + flowZ * flowZ);
+                            if (flowLength > 0) {
+                                flowX /= flowLength;
+                                flowY /= flowLength;
+                                flowZ /= flowLength;
+                            }
+                            
+                            // Spawn bubble particles showing current direction
+                            double particleX = checkPos.getX() + 0.5 + (RANDOM.nextDouble() - 0.5) * 0.6;
+                            double particleY = checkPos.getY() + 0.3 + RANDOM.nextDouble() * 0.4;
+                            double particleZ = checkPos.getZ() + 0.5 + (RANDOM.nextDouble() - 0.5) * 0.6;
+                            
+                            // Velocity in flow direction
+                            double velX = flowX * 0.08 + (RANDOM.nextDouble() - 0.5) * 0.02;
+                            double velY = flowY * 0.05 + 0.01; // Slight upward bias for bubbles
+                            double velZ = flowZ * 0.08 + (RANDOM.nextDouble() - 0.5) * 0.02;
+                            
+                            // Send bubble particle
+                            level.sendParticles(
+                                ParticleTypes.BUBBLE,
+                                particleX, particleY, particleZ,
+                                1,
+                                velX, velY, velZ,
+                                0.0
+                            );
+                            
+                            particlesSpawned++;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Find the direction water is flowing by checking neighboring blocks for lower fluid levels
+     */
+    private static BlockPos findFlowDirection(ServerLevel level, BlockPos pos, int currentLevel) {
+        BlockPos bestTarget = null;
+        int lowestLevel = currentLevel;
+        
+        // Check horizontal neighbors first
+        for (Direction dir : new Direction[]{Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST}) {
+            BlockPos neighbor = pos.relative(dir);
+            FluidState neighborFluid = level.getFluidState(neighbor);
+            
+            // Water flows toward lower levels or air
+            if (neighborFluid.isEmpty()) {
+                // Flowing toward air - this is probably where water is draining
+                return neighbor;
+            } else if (neighborFluid.is(Fluids.WATER) || neighborFluid.is(Fluids.FLOWING_WATER)) {
+                int neighborLevel = neighborFluid.getAmount();
+                if (neighborLevel < lowestLevel) {
+                    lowestLevel = neighborLevel;
+                    bestTarget = neighbor;
+                }
+            }
+        }
+        
+        // Check below - water flows down
+        BlockPos below = pos.below();
+        FluidState belowFluid = level.getFluidState(below);
+        if (belowFluid.isEmpty() || (belowFluid.is(Fluids.WATER) && belowFluid.isSource())) {
+            // Water is draining downward
+            return below;
+        }
+        
+        return bestTarget;
     }
 }
