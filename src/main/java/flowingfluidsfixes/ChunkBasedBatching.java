@@ -37,6 +37,8 @@ public class ChunkBasedBatching {
     private static final int CHUNK_SIZE = 16;
 
     // State variables
+    // MEMORY FIX: Added hard size limits to all sets
+    private static final int MAX_SET_SIZE = 1000;
     private static long LAST_CLEANUP = 0;
     private static final Set<BlockPos> activeChunks = new HashSet<>();
     private static final Set<BlockPos> pendingChunks = new HashSet<>();
@@ -62,6 +64,13 @@ public class ChunkBasedBatching {
 
     public static void queueFluidUpdate(Level level, BlockPos pos) {
         if (level.isClientSide) return;
+        
+        // MEMORY FIX: Enforce size limit
+        if (fluidUpdateChunks.size() >= MAX_SET_SIZE) {
+            fluidUpdateChunks.clear();
+            LOGGER.debug("Cleared fluidUpdateChunks due to size limit");
+        }
+        
         BlockPos chunkIdentifier = new BlockPos(
             pos.getX() & ~(CHUNK_SIZE - 1),
             pos.getY() & ~(CHUNK_SIZE - 1),
@@ -132,6 +141,12 @@ public class ChunkBasedBatching {
     }
 
     private static void queueChunkForProcessing(@SuppressWarnings("unused") Level level, BlockPos pos) {
+        // MEMORY FIX: Enforce size limit
+        if (activeChunks.size() >= MAX_SET_SIZE) {
+            activeChunks.clear();
+            LOGGER.debug("Cleared activeChunks due to size limit");
+        }
+        
         BlockPos chunkIdentifier = new BlockPos(
             pos.getX() & ~(CHUNK_SIZE - 1),
             pos.getY() & ~(CHUNK_SIZE - 1),
@@ -232,8 +247,11 @@ public class ChunkBasedBatching {
     }
     
     private static void cleanupProcessedChunks(@SuppressWarnings("unused") ServerLevel level) {
+        // MEMORY FIX: Clear all sets during cleanup
         activeChunks.clear();
         pendingChunks.clear();
+        fluidUpdateChunks.clear();
+        chunksProcessedThisTick.clear();
         LAST_CLEANUP = System.currentTimeMillis();
         LOGGER.debug("Cleaned up processed chunks after interval: {}", CLEANUP_INTERVAL);
     }

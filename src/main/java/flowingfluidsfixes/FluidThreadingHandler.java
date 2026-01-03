@@ -26,8 +26,11 @@ public class FluidThreadingHandler {
     private static ScheduledExecutorService scheduledExecutor;
     
     // Queue for pending fluid updates to be processed async
+    // MEMORY FIX: These queues now have enforced size limits
     private static final Queue<FluidUpdateTask> pendingUpdates = new ConcurrentLinkedQueue<>();
     private static final Queue<FluidUpdateResult> completedResults = new ConcurrentLinkedQueue<>();
+    private static final int MAX_PENDING_QUEUE_SIZE = 2000; // Hard limit to prevent memory bloat
+    private static final int MAX_COMPLETED_QUEUE_SIZE = 1000;
     
     // Thread pool statistics
     private static final AtomicLong totalAsyncUpdates = new AtomicLong(0);
@@ -107,10 +110,17 @@ public class FluidThreadingHandler {
             return;
         }
         
-        if (queuedTasks.get() >= maxQueueSize) {
-            // Queue full - skip low priority updates
-            if (priority < 5) {
-                return;
+        // MEMORY FIX: Enforce hard queue size limits
+        if (queuedTasks.get() >= maxQueueSize || pendingUpdates.size() >= MAX_PENDING_QUEUE_SIZE) {
+            // Queue full - skip all updates to prevent memory buildup
+            return;
+        }
+        
+        // Also check completed results queue
+        if (completedResults.size() >= MAX_COMPLETED_QUEUE_SIZE) {
+            // Results backing up - clear old ones
+            while (completedResults.size() > MAX_COMPLETED_QUEUE_SIZE / 2) {
+                completedResults.poll();
             }
         }
         
@@ -439,8 +449,14 @@ public class FluidThreadingHandler {
     
     /**
      * Shutdown the thread pool gracefully
+     * MEMORY FIX: Also clear queues on shutdown
      */
     public static void shutdown() {
+        // Clear queues to release memory
+        pendingUpdates.clear();
+        completedResults.clear();
+        queuedTasks.set(0);
+        
         if (fluidThreadPool != null) {
             fluidThreadPool.shutdown();
             try {
@@ -456,6 +472,16 @@ public class FluidThreadingHandler {
             scheduledExecutor.shutdown();
         }
         LOGGER.info("Fluid thread pool shutdown complete");
+    }
+    
+    /**
+     * Clear all queues - call periodically to prevent memory buildup
+     */
+    public static void clearQueues() {
+        pendingUpdates.clear();
+        completedResults.clear();
+        queuedTasks.set(0);
+        LOGGER.debug("Cleared fluid threading queues");
     }
     
     /**

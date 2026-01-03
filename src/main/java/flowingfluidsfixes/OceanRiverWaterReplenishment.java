@@ -37,10 +37,13 @@ public class OceanRiverWaterReplenishment {
     private static final int SEA_LEVEL = 63;
     
     // Queue of positions that need water replenishment
+    // MEMORY FIX: Added hard size limits
     private static final ConcurrentLinkedQueue<ReplenishmentTask> replenishmentQueue = new ConcurrentLinkedQueue<>();
+    private static final int MAX_REPLENISHMENT_QUEUE_SIZE = 500; // Reduced from unbounded
     
     // Track positions currently being replenished to avoid duplicates
     private static final Set<BlockPos> activeReplenishment = ConcurrentHashMap.newKeySet();
+    private static final int MAX_ACTIVE_REPLENISHMENT_SIZE = 500; // Hard limit
     
     // Track water positions above ocean that might need draining
     // Maps position -> (tick when first seen, fluid level when first seen)
@@ -49,14 +52,19 @@ public class OceanRiverWaterReplenishment {
     // How long water must sit still before draining (in ticks) - 0.25 seconds = 5 ticks
     private static final int DRAIN_DELAY_TICKS = 5;
     
-    // Max drain candidates to track
-    private static final int MAX_DRAIN_CANDIDATES = 5000;
+    // Max drain candidates to track - MEMORY FIX: Reduced from 5000
+    private static final int MAX_DRAIN_CANDIDATES = 1000;
     
     // Configuration values (can be modified via config)
     private static float oceanReplenishRate = 0.95f; // Ultra fast - 95% chance per tick
     private static float riverReplenishRate = 0.80f; // Very fast - 80% chance for rivers
-    private static int maxReplenishmentsPerTick = 1000; // Ultra high - 1000 blocks/tick
+    private static int maxReplenishmentsPerTick = 500; // Reduced from 1000 to limit processing load
     private static boolean enabled = true;
+    private static int shoreWaterLevelingRadius = 32; // Reduced radius for shore water leveling
+    private static int rainWaterRemovalRadius = 40; // Reduced radius for rain water removal
+    private static int thinLayerLevelingRadius = 24; // Reduced radius for thin layer leveling
+    private static int oceanSurfaceEvaporationRadius = 64; // Reduced radius for evaporation
+    private static int oceanSurfaceFillingRadius = 32; // Reduced radius for direct filling
     
     /**
      * Check if a position is eligible for water replenishment.
@@ -125,12 +133,25 @@ public class OceanRiverWaterReplenishment {
             return;
         }
         
+        // MEMORY FIX: Enforce hard size limits
+        if (replenishmentQueue.size() >= MAX_REPLENISHMENT_QUEUE_SIZE) {
+            replenishmentQueue.clear();
+            activeReplenishment.clear();
+            LOGGER.debug("Cleared replenishment queue due to size limit");
+            return;
+        }
+        
+        if (activeReplenishment.size() >= MAX_ACTIVE_REPLENISHMENT_SIZE) {
+            activeReplenishment.clear();
+            LOGGER.debug("Cleared activeReplenishment due to size limit");
+        }
+        
         // Get appropriate replenishment rate based on biome
         float rate = BiomeOptimization.isOceanBiome(level, pos) ? oceanReplenishRate : riverReplenishRate;
         
-        ReplenishmentTask task = new ReplenishmentTask(pos, currentState.getAmount(), rate);
+        ReplenishmentTask task = new ReplenishmentTask(pos.immutable(), currentState.getAmount(), rate);
         replenishmentQueue.offer(task);
-        activeReplenishment.add(pos);
+        activeReplenishment.add(pos.immutable());
         
         LOGGER.debug("Scheduled water replenishment at {} in {} biome", 
             pos, BiomeOptimization.isOceanBiome(level, pos) ? "ocean" : "river");
@@ -333,9 +354,21 @@ public class OceanRiverWaterReplenishment {
     public static void setEnabled(boolean value) {
         enabled = value;
         if (!value) {
+            // MEMORY FIX: Clear all collections when disabled
             replenishmentQueue.clear();
             activeReplenishment.clear();
+            drainCandidates.clear();
         }
+    }
+    
+    /**
+     * Clear all caches - call periodically or on world unload to prevent memory leaks
+     */
+    public static void clearAllCaches() {
+        replenishmentQueue.clear();
+        activeReplenishment.clear();
+        drainCandidates.clear();
+        LOGGER.debug("Cleared all OceanRiverWaterReplenishment caches");
     }
     
     public static boolean isEnabled() {
@@ -479,25 +512,25 @@ public class OceanRiverWaterReplenishment {
         long currentTick = level.getGameTime();
         int drained = 0;
         int tracked = 0;
-        int maxPerTick = 2000; // Very aggressive - process almost instantly
+        int maxPerTick = 1000; // Reduced from 2000 to limit processing load
         
-        // Clean up stale entries more frequently during rain (every 100 ticks)
-        int cleanupInterval = level.isRaining() ? 100 : 200;
+        // Clean up stale entries less frequently to save processing (every 200 ticks)
+        int cleanupInterval = level.isRaining() ? 150 : 200;
         if (currentTick % cleanupInterval == 0) {
             cleanupStaleDrainCandidates(level, currentTick);
         }
         
-        // Process all players, but be extra aggressive during rain
+        // Process all players, but with reduced radius
         for (var player : level.players()) {
             if (drained >= maxPerTick) break;
             
             BlockPos playerPos = player.blockPosition();
-            int radius = level.isRaining() ? 64 : 48; // Larger radius during rain
+            int radius = level.isRaining() ? shoreWaterLevelingRadius + 8 : shoreWaterLevelingRadius; // Slightly larger during rain
             
-            // Scan ABOVE sea level with full coverage for instant leveling
-            int maxY = level.isRaining() ? SEA_LEVEL + 15 : SEA_LEVEL + 12;
-            for (int dx = -radius; dx <= radius && drained < maxPerTick; dx += 1) {
-                for (int dz = -radius; dz <= radius && drained < maxPerTick; dz += 1) {
+            // Scan ABOVE sea level with reduced coverage
+            int maxY = level.isRaining() ? SEA_LEVEL + 10 : SEA_LEVEL + 8;
+            for (int dx = -radius; dx <= radius && drained < maxPerTick; dx += 2) { // Increased step to reduce checks
+                for (int dz = -radius; dz <= radius && drained < maxPerTick; dz += 2) { // Increased step to reduce checks
                     for (int worldY = SEA_LEVEL + 1; worldY <= maxY; worldY++) {
                         BlockPos checkPos = new BlockPos(
                             playerPos.getX() + dx, 
@@ -550,18 +583,18 @@ public class OceanRiverWaterReplenishment {
         }
         
         int removed = 0;
-        int maxPerTick = 1000; // Very aggressive during rain
+        int maxPerTick = 500; // Reduced from 1000 to limit processing load
         
         for (var player : level.players()) {
             if (removed >= maxPerTick) break;
             
             BlockPos playerPos = player.blockPosition();
-            int radius = 80; // Large radius to catch all floating water
+            int radius = rainWaterRemovalRadius; // Reduced radius to focus on nearby areas
             
-            // Scan for ANY floating water sources during rain
-            for (int dx = -radius; dx <= radius; dx += 1) {
-                for (int dz = -radius; dz <= radius; dz += 1) {
-                    for (int worldY = SEA_LEVEL + 1; worldY <= SEA_LEVEL + 20; worldY++) {
+            // Scan for ANY floating water sources during rain with reduced range
+            for (int dx = -radius; dx <= radius; dx += 2) { // Increased step to reduce checks
+                for (int dz = -radius; dz <= radius; dz += 2) { // Increased step to reduce checks
+                    for (int worldY = SEA_LEVEL + 1; worldY <= SEA_LEVEL + 15; worldY++) { // Reduced height range
                         BlockPos checkPos = new BlockPos(
                             playerPos.getX() + dx, 
                             worldY, 
@@ -652,10 +685,10 @@ public class OceanRiverWaterReplenishment {
         
         long currentTick = level.getGameTime();
         int processed = 0;
-        int maxPerTick = 2000; // Very aggressive - process almost instantly
+        int maxPerTick = 1000; // Reduced from 2000 to limit processing load
         
-        // Only process every 1 tick for instant response
-        if (currentTick % 1 != 0) {
+        // Only process every 2 ticks instead of every tick to reduce load
+        if (currentTick % 2 != 0) {
             return;
         }
         
@@ -663,11 +696,11 @@ public class OceanRiverWaterReplenishment {
             if (processed >= maxPerTick) break;
             
             BlockPos playerPos = player.blockPosition();
-            int radius = 48; // Larger radius for instant coverage
+            int radius = thinLayerLevelingRadius; // Reduced radius for processing
             
             // Focus on thin layers just above sea level
-            for (int dx = -radius; dx <= radius && processed < maxPerTick; dx += 1) {
-                for (int dz = -radius; dz <= radius && processed < maxPerTick; dz += 1) {
+            for (int dx = -radius; dx <= radius && processed < maxPerTick; dx += 2) { // Increased step to reduce checks
+                for (int dz = -radius; dz <= radius && processed < maxPerTick; dz += 2) { // Increased step to reduce checks
                     for (int worldY = SEA_LEVEL - 1; worldY <= SEA_LEVEL + 3; worldY++) {
                         BlockPos checkPos = new BlockPos(
                             playerPos.getX() + dx, 
@@ -698,13 +731,6 @@ public class OceanRiverWaterReplenishment {
     }
     
     /**
-     * Get drain candidate count for debugging
-     */
-    public static int getDrainCandidateCount() {
-        return drainCandidates.size();
-    }
-    
-    /**
      * INSTANT EVAPORATION SYSTEM
      * 
      * Thin flowing water (level 1-4) sitting directly ON TOP of ocean source blocks
@@ -719,24 +745,24 @@ public class OceanRiverWaterReplenishment {
             return;
         }
         
-        // Process every tick for immediate absorption
-        // if (level.getGameTime() % 2 != 0) {
-        //     return;
-        // }
+        // Process every 2 ticks instead of every tick to reduce load
+        if (level.getGameTime() % 2 != 0) {
+            return;
+        }
         
         int evaporated = 0;
-        int maxPerTick = 10000; // EXTREMELY aggressive - process as many as possible
+        int maxPerTick = 5000; // Reduced from 10000 to limit processing load
         
         for (var player : level.players()) {
             if (evaporated >= maxPerTick) break;
             
             BlockPos playerPos = player.blockPosition();
-            int radius = 128; // Massive radius to cover entire visible area
+            int radius = oceanSurfaceEvaporationRadius; // Reduced radius to focus on nearby areas
             
             // Scan Y=63-64 to catch thin layers at sea level and just above
             for (int worldY = SEA_LEVEL; worldY <= SEA_LEVEL + 1; worldY++) {
-                for (int dx = -radius; dx <= radius && evaporated < maxPerTick; dx++) {
-                    for (int dz = -radius; dz <= radius && evaporated < maxPerTick; dz++) {
+                for (int dx = -radius; dx <= radius && evaporated < maxPerTick; dx += 2) { // Increased step to reduce checks
+                    for (int dz = -radius; dz <= radius && evaporated < maxPerTick; dz += 2) { // Increased step to reduce checks
                         BlockPos checkPos = new BlockPos(
                             playerPos.getX() + dx, 
                             worldY, 
@@ -856,7 +882,7 @@ public class OceanRiverWaterReplenishment {
             if (particlesSpawned >= maxParticlesPerTick) break;
             
             BlockPos playerPos = player.blockPosition();
-            int radius = 28; // Moderate radius to check fewer blocks
+            int radius = 28; // Moderate radius to cover nearby flowing water
             
             // Scan for flowing water near player
             for (int dx = -radius; dx <= radius && particlesSpawned < maxParticlesPerTick; dx += 2) {
@@ -973,7 +999,7 @@ public class OceanRiverWaterReplenishment {
         }
         
         int filled = 0;
-        int maxPerTick = 5000; // Extremely aggressive - fill as many holes as possible
+        int maxPerTick = 10000; // Extremely aggressive - fill as many holes as possible
         
         for (var player : level.players()) {
             if (filled >= maxPerTick) break;
@@ -1001,9 +1027,9 @@ public class OceanRiverWaterReplenishment {
                     
                     // Fill air or non-source water instantly
                     if (blockState.isAir() || (fluidState.is(Fluids.FLOWING_WATER) && !fluidState.isSource())) {
-                        // Check if surrounded by ocean water (at least 2 adjacent source blocks)
+                        // Check if surrounded by ocean water (at least 1 adjacent source block for faster filling)
                         int sourceNeighbors = countAdjacentWaterSources(level, checkPos);
-                        if (sourceNeighbors >= 2) {
+                        if (sourceNeighbors >= 1) {
                             level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
                             filled++;
                         }

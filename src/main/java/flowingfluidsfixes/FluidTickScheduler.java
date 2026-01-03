@@ -72,8 +72,9 @@ public class FluidTickScheduler {
     
     // FLOW STABILITY CACHE - Cache stable flow patterns to avoid recalculation
     // Key: BlockPos, Value: StableFlowEntry with cached flow state
+    // MEMORY FIX: Reduced max size and added aggressive cleanup
     private static final Map<BlockPos, StableFlowEntry> stableFlowCache = new ConcurrentHashMap<>();
-    private static final int STABLE_FLOW_CACHE_MAX_SIZE = 50000;
+    private static final int STABLE_FLOW_CACHE_MAX_SIZE = 5000; // Reduced from 50000 to prevent memory bloat
     private static final int STABILITY_THRESHOLD = 2; // Updates without change = stable (faster detection)
     
     // EDGE FLUID TRACKING - Track edge fluids (level 1-2) that rarely flow
@@ -105,36 +106,69 @@ public class FluidTickScheduler {
         fluidTimeUsedThisTick = 0;
         currentServerTick++;
         
-        // Periodic cache cleanup every 200 ticks (10 seconds)
-        if (currentServerTick % 200 == 0) {
+        // MEMORY FIX: More frequent cache cleanup every 100 ticks (5 seconds)
+        if (currentServerTick % 100 == 0) {
             cleanupCaches();
         }
     }
     
     /**
      * Clean up expired cache entries to prevent memory bloat
+     * MEMORY FIX: More aggressive cleanup with hard size limits
      */
     private static void cleanupCaches() {
-        long cutoffTick = currentServerTick - 100; // Expire entries older than 5 seconds
+        long cutoffTick = currentServerTick - 50; // Expire entries older than 2.5 seconds (more aggressive)
         
-        // Clean stable flow cache
+        // Clean stable flow cache - enforce hard limit
         stableFlowCache.entrySet().removeIf(e -> e.getValue().lastUpdateTick < cutoffTick);
+        if (stableFlowCache.size() > STABLE_FLOW_CACHE_MAX_SIZE) {
+            // Emergency clear if over limit
+            stableFlowCache.clear();
+            LOGGER.warn("Cleared stableFlowCache due to size limit exceeded");
+        }
         
-        // Clean edge fluid cache
+        // Clean edge fluid cache - enforce hard limit of 5000
         edgeFluidCache.entrySet().removeIf(e -> e.getValue().lastCheckTick < cutoffTick);
+        if (edgeFluidCache.size() > 5000) {
+            edgeFluidCache.clear();
+            dormantEdgeFluids.set(0);
+            LOGGER.warn("Cleared edgeFluidCache due to size limit exceeded");
+        }
         
-        // Clean heavy flow zones
+        // Clean heavy flow zones - enforce hard limit of 500
         heavyFlowZones.entrySet().removeIf(e -> e.getValue().lastUpdateTick < cutoffTick);
+        if (heavyFlowZones.size() > 500) {
+            heavyFlowZones.clear();
+            LOGGER.warn("Cleared heavyFlowZones due to size limit exceeded");
+        }
         
-        // Clean recently scheduled
-        long timeCutoff = System.currentTimeMillis() - 2000;
+        // Clean recently scheduled - enforce hard limit of 5000
+        long timeCutoff = System.currentTimeMillis() - 1000; // 1 second instead of 2
         recentlyScheduled.entrySet().removeIf(e -> e.getValue() < timeCutoff);
+        if (recentlyScheduled.size() > 5000) {
+            recentlyScheduled.clear();
+        }
         
-        // Clean fluid change origins
+        // Clean fluid change origins - enforce hard limit of 5000
         fluidChangeOrigins.entrySet().removeIf(e -> recentlyScheduled.getOrDefault(e.getKey(), 0L) < timeCutoff);
+        if (fluidChangeOrigins.size() > 5000) {
+            fluidChangeOrigins.clear();
+        }
         
-        LOGGER.debug("Cache cleanup: stableFlow={}, edgeFluid={}, heavyZones={}",
-            stableFlowCache.size(), edgeFluidCache.size(), heavyFlowZones.size());
+        // Clean stable source block cache
+        stableSourceBlockCache.entrySet().removeIf(e -> currentServerTick - e.getValue() > 50);
+        if (stableSourceBlockCache.size() > STABLE_SOURCE_CACHE_MAX_SIZE) {
+            stableSourceBlockCache.clear();
+        }
+        
+        // Clean deferred queue if too large
+        if (deferredQueue.size() > 1000) {
+            deferredQueue.clear();
+            LOGGER.warn("Cleared deferredQueue due to size limit exceeded");
+        }
+        
+        LOGGER.debug("Cache cleanup: stableFlow={}, edgeFluid={}, heavyZones={}, deferred={}",
+            stableFlowCache.size(), edgeFluidCache.size(), heavyFlowZones.size(), deferredQueue.size());
     }
     
     /**
@@ -351,8 +385,9 @@ public class FluidTickScheduler {
     }
     
     // Cache for stable source blocks - tracks source blocks in equilibrium
+    // MEMORY FIX: Reduced max size to prevent memory bloat
     private static final Map<BlockPos, Long> stableSourceBlockCache = new ConcurrentHashMap<>();
-    private static final int STABLE_SOURCE_CACHE_MAX_SIZE = 30000;
+    private static final int STABLE_SOURCE_CACHE_MAX_SIZE = 3000; // Reduced from 30000
     
     /**
      * Check if a source block is stable (surrounded by other sources or solid blocks)

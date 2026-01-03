@@ -1,6 +1,5 @@
 package flowingfluidsfixes.mixin;
 
-import flowingfluidsfixes.FluidOptimizer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
@@ -11,29 +10,28 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Mixin that hooks into vanilla FlowingFluid.tick() to control TIMING only.
+ * Mixin that hooks into vanilla FlowingFluid.tick() for MONITORING only.
  * 
- * PARITY GUARANTEE: We do NOT modify ANY fluid behavior.
- * Flowing Fluids' mixin runs after ours and handles ALL fluid logic.
- * We only defer ticks when over budget to prevent lag spikes.
+ * CRITICAL FIX: We NO LONGER cancel ticks - this was breaking Flowing Fluids.
+ * Instead, we only monitor and record metrics. Flowing Fluids handles all fluid logic.
+ * 
+ * Performance optimization is now done via config recommendations, not tick interception.
  */
 @Mixin(net.minecraft.world.level.material.FlowingFluid.class)
 public abstract class FlowingFluidsMixin {
     
     /**
-     * Intercept fluid tick() to control timing.
+     * Monitor fluid ticks for performance metrics only.
      * 
-     * CRITICAL: This runs BEFORE Flowing Fluids' mixin due to lower priority.
-     * If we're over budget, we DEFER the tick (reschedule for next server tick).
-     * We NEVER drop ticks - this guarantees floating water eventually spreads.
-     * 
-     * If under budget, we let the tick proceed and Flowing Fluids handles everything.
+     * FIXED: No longer cancels ticks - this was preventing Flowing Fluids from working.
+     * We only record that a tick happened for our performance monitoring.
      */
-    @Inject(method = "tick", at = @At("HEAD"), cancellable = true, remap = false)
+    @Inject(method = "tick", at = @At("HEAD"), cancellable = false, remap = false)
     private void onTick(Level level, BlockPos pos, BlockState state, FluidState fluidState, CallbackInfo ci) {
-        if (!fluidState.isEmpty()) {
-            FluidOptimizer.queueFluidUpdate(level, pos, fluidState, state);
-            ci.cancel();
+        // Only record metrics - DO NOT cancel or interfere with Flowing Fluids
+        if (!fluidState.isEmpty() && !level.isClientSide()) {
+            flowingfluidsfixes.PerformanceMonitor.recordFluidUpdate();
         }
+        // Let Flowing Fluids handle the actual fluid logic
     }
 }
