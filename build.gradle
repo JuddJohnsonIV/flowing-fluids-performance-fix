@@ -99,7 +99,7 @@ jar {
         attributes([
             "Specification-Title": "Flowing Fluids Fixes",
             "Specification-Vendor": "Example",
-            "Specification-Version": "1.0.2",
+            "Specification-Version": "1.0.4",
             "Implementation-Title": project.name,
             "Implementation-Version": project.jar.archiveVersion,
             "Implementation-Vendor": "Example",
