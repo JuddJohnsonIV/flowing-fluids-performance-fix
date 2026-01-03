@@ -2,19 +2,22 @@ buildscript {
     repositories {
         mavenCentral()
         maven { url = 'https://maven.minecraftforge.net' }
+        maven { url = 'https://repo.spongepowered.org/repository/maven-public/' }
     }
     dependencies {
         classpath group: 'net.minecraftforge.gradle', name: 'ForgeGradle', version: '6.0.+', changing: true
+        classpath 'org.spongepowered:mixingradle:0.7-SNAPSHOT'
     }
 }
 
 apply plugin: 'net.minecraftforge.gradle'
 apply plugin: 'eclipse'
 apply plugin: 'maven-publish'
+apply plugin: 'org.spongepowered.mixin'
 
 group = 'com.example'
-version = '1.0.4'
-archivesBaseName = 'flowingfluidsfixes-1.0.4'
+version = '1.0.5'
+archivesBaseName = 'flowingfluidsfixes-1.0.5'
 
 java {
     toolchain {
@@ -43,7 +46,7 @@ java {
 println('Java: ' + System.getProperty('java.version') + ' JVM: ' + System.getProperty('java.vm.version') + '(' + System.getProperty('java.vendor') + ') Arch: ' + System.getProperty('os.arch'))
 
 minecraft {
-    mappings channel: 'official', version: '1.18.1'
+    mappings channel: 'official', version: '1.20.1'
     
     runs {
         client {
@@ -73,14 +76,18 @@ minecraft {
 repositories {
     mavenCentral()
     maven { url = 'https://maven.minecraftforge.net' }
+    maven { url = 'https://repo.spongepowered.org/repository/maven-public/' }
 }
 
 dependencies {
-    minecraft 'net.minecraftforge:forge:1.18.1-39.1.0'
+    minecraft 'net.minecraftforge:forge:1.20.1-47.4.13'
     implementation 'org.apache.logging.log4j:log4j-api:2.19.0'
     implementation 'org.apache.logging.log4j:log4j-core:2.19.0'
     // Flowing Fluids dependency (compile-time only, will be provided by user)
     // implementation 'com.traben:flowing_fluids:1.20.1-0.6.1'
+    
+    // Mixin annotation processor
+    annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
     
     // JUnit 5 for testing
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.9.2'
@@ -88,6 +95,11 @@ dependencies {
     // Mockito for mocking in tests
     testImplementation 'org.mockito:mockito-core:5.8.0'
     testImplementation 'org.mockito:mockito-junit-jupiter:5.8.0'
+}
+
+mixin {
+    add sourceSets.main, "flowing_fluids.refmap.json"
+    config "flowing_fluids.mixins.json"
 }
 
 test {
@@ -103,7 +115,8 @@ jar {
             "Implementation-Title": project.name,
             "Implementation-Version": project.jar.archiveVersion,
             "Implementation-Vendor": "Example",
-            "Implementation-Timestamp": new Date().format("yyyy-MM-dd'T'HH:mm:ssZ")
+            "Implementation-Timestamp": new Date().format("yyyy-MM-dd'T'HH:mm:ssZ"),
+            "MixinConfigs": "flowing_fluids.mixins.json"
         ])
     }
 }
