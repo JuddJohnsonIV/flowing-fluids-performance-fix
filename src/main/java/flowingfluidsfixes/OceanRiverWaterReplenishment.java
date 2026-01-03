@@ -673,4 +673,90 @@ public class OceanRiverWaterReplenishment {
     public static int getDrainCandidateCount() {
         return drainCandidates.size();
     }
+    
+    /**
+     * INSTANT EVAPORATION SYSTEM
+     * 
+     * Thin flowing water (level 1-4) sitting directly ON TOP of ocean source blocks
+     * will evaporate/merge into the ocean using random ticks. This prevents the massive
+     * calculation load from thin rain water layers spreading across the ocean surface.
+     * 
+     * Detection: Y=64 with ocean source water at Y=63 below
+     * Action: Random chance evaporation - unpredictable for player, low performance impact
+     */
+    public static void processInstantOceanSurfaceEvaporation(ServerLevel level) {
+        if (!enabled) {
+            return;
+        }
+        
+        // Only process every 2 ticks to reduce overhead
+        if (level.getGameTime() % 2 != 0) {
+            return;
+        }
+        
+        int evaporated = 0;
+        int maxPerTick = 500; // Moderate amount per tick to avoid lag
+        
+        for (var player : level.players()) {
+            if (evaporated >= maxPerTick) break;
+            
+            BlockPos playerPos = player.blockPosition();
+            int radius = 64; // Reasonable radius
+            
+            // ONLY scan at Y=64 (one block above sea level) - this is where the problem layer sits
+            int surfaceY = SEA_LEVEL + 1; // Y=64
+            
+            for (int dx = -radius; dx <= radius && evaporated < maxPerTick; dx++) {
+                for (int dz = -radius; dz <= radius && evaporated < maxPerTick; dz++) {
+                    // Random chance to check this position - makes evaporation unpredictable
+                    if (RANDOM.nextFloat() > 0.15f) continue; // Only 15% chance to check each block
+                    
+                    BlockPos checkPos = new BlockPos(
+                        playerPos.getX() + dx, 
+                        surfaceY, 
+                        playerPos.getZ() + dz
+                    );
+                    
+                    if (!level.isLoaded(checkPos)) continue;
+                    
+                    FluidState fluidState = level.getFluidState(checkPos);
+                    
+                    // Skip if empty or source block
+                    if (fluidState.isEmpty() || fluidState.isSource()) continue;
+                    
+                    // Only process thin layers (level 1-4)
+                    int fluidLevel = fluidState.getAmount();
+                    if (fluidLevel > 4) continue;
+                    
+                    // Check if sitting directly on ocean source water
+                    BlockPos belowPos = checkPos.below(); // Y=63
+                    FluidState belowFluid = level.getFluidState(belowPos);
+                    
+                    if (belowFluid.is(Fluids.WATER) && belowFluid.isSource()) {
+                        // Verify we're in ocean/river biome
+                        if (BiomeOptimization.isOceanOrRiverBiome(level, belowPos)) {
+                            // Random evaporation chance based on fluid level
+                            // Thinner layers evaporate faster
+                            float evapChance = switch (fluidLevel) {
+                                case 1 -> 0.90f; // 90% chance for level 1
+                                case 2 -> 0.70f; // 70% chance for level 2
+                                case 3 -> 0.50f; // 50% chance for level 3
+                                case 4 -> 0.30f; // 30% chance for level 4
+                                default -> 0.20f;
+                            };
+                            
+                            if (RANDOM.nextFloat() < evapChance) {
+                                level.setBlock(checkPos, Blocks.AIR.defaultBlockState(), 3);
+                                evaporated++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        if (evaporated > 0) {
+            LOGGER.debug("Random evaporation: removed {} thin water layers from ocean surface", evaporated);
+        }
+    }
 }

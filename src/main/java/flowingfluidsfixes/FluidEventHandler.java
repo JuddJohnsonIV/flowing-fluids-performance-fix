@@ -89,6 +89,10 @@ public class FluidEventHandler {
         // ENHANCED: Process thin layer leveling more frequently to prevent thick layer accumulation
         OceanRiverWaterReplenishment.processThinLayerLeveling(overworld);
         
+        // CRITICAL: Instant evaporation of thin water layers sitting on ocean surface
+        // This removes the darker rain water layer that spreads across the ocean causing lag
+        OceanRiverWaterReplenishment.processInstantOceanSurfaceEvaporation(overworld);
+        
         // ENHANCED: Aggressive rain water removal during rain to eliminate floating water
         OceanRiverWaterReplenishment.processRainWaterRemoval(overworld);
         
