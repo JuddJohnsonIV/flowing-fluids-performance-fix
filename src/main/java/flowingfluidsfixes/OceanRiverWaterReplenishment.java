@@ -990,8 +990,9 @@ public class OceanRiverWaterReplenishment {
     }
 
     /**
-     * ULTRA-AGGRESSIVE: Directly fill ocean surface holes at Y=63.
+     * ULTRA-AGGRESSIVE: Directly fill ocean surface holes at Y=62-65.
      * This bypasses the queue system and instantly converts non-source water to source blocks.
+     * ENHANCED: Now handles multiple Y levels and includes river biomes for faster filling.
      */
     public static void processDirectOceanSurfaceFilling(ServerLevel level) {
         if (!enabled || !FlowingFluidsIntegration.isFlowingFluidsLoaded()) {
@@ -1007,29 +1008,29 @@ public class OceanRiverWaterReplenishment {
             BlockPos playerPos = player.blockPosition();
             int radius = 64; // Large radius to cover visible ocean surface
             
-            // Focus strictly on Y=63 (sea level)
-            int worldY = SEA_LEVEL;
-            for (int dx = -radius; dx <= radius && filled < maxPerTick; dx++) {
-                for (int dz = -radius; dz <= radius && filled < maxPerTick; dz++) {
-                    BlockPos checkPos = new BlockPos(
-                        playerPos.getX() + dx, 
-                        worldY, 
-                        playerPos.getZ() + dz
-                    );
-                    
-                    if (!level.isLoaded(checkPos)) continue;
-                    
-                    // Only process in ocean biomes
-                    if (!BiomeOptimization.isOceanBiome(level, checkPos)) continue;
-                    
-                    FluidState fluidState = level.getFluidState(checkPos);
-                    BlockState blockState = level.getBlockState(checkPos);
-                    
-                    // Fill air or non-source water instantly
-                    if (blockState.isAir() || (fluidState.is(Fluids.FLOWING_WATER) && !fluidState.isSource())) {
-                        // Check if surrounded by ocean water (at least 1 adjacent source block for faster filling)
-                        int sourceNeighbors = countAdjacentWaterSources(level, checkPos);
-                        if (sourceNeighbors >= 1) {
+            // Check multiple Y levels around sea level (62-65) to catch missing layers
+            for (int worldY = SEA_LEVEL - 1; worldY <= SEA_LEVEL + 2; worldY++) {
+                for (int dx = -radius; dx <= radius && filled < maxPerTick; dx++) {
+                    for (int dz = -radius; dz <= radius && filled < maxPerTick; dz++) {
+                        BlockPos checkPos = new BlockPos(
+                            playerPos.getX() + dx, 
+                            worldY, 
+                            playerPos.getZ() + dz
+                        );
+                        
+                        if (!level.isLoaded(checkPos)) continue;
+                        
+                        // Process in both ocean AND river biomes for maximum coverage
+                        if (!BiomeOptimization.isOceanOrRiverBiome(level, checkPos)) continue;
+                        
+                        FluidState fluidState = level.getFluidState(checkPos);
+                        BlockState blockState = level.getBlockState(checkPos);
+                        
+                        // Fill air or non-source water instantly - NO adjacent source requirement
+                        // This ensures holes fill even if isolated
+                        if (blockState.isAir() || (fluidState.is(Fluids.FLOWING_WATER) && !fluidState.isSource())) {
+                            // ULTRA-AGGRESSIVE: Fill regardless of adjacent sources
+                            // This mimics natural ocean water level restoration
                             level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
                             filled++;
                         }
@@ -1039,7 +1040,7 @@ public class OceanRiverWaterReplenishment {
         }
         
         if (filled > 0) {
-            LOGGER.debug("Directly filled {} ocean surface holes at Y={}", filled, SEA_LEVEL);
+            LOGGER.debug("Directly filled {} ocean/river surface holes at Y levels {}-{}", filled, SEA_LEVEL - 1, SEA_LEVEL + 2);
         }
     }
     
