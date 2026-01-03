@@ -1355,27 +1355,27 @@ public class OceanRiverWaterReplenishment {
     }
     
     /**
-     * ULTRA-INSTANT OCEAN SURFACE LEVELING
+     * ULTRA-FAST OCEAN SURFACE LEVELING
      * 
-     * Processes EVERY SINGLE TICK to ensure ocean surface is perfectly flat at Y=62.5
+     * Processes EVERY SINGLE TICK to achieve ocean surface restoration in ~5 ticks.
      * This matches vanilla Minecraft water surface exactly and prevents any dips from forming.
      * Targets Y=62-63 blocks to achieve perfect Y=62.5 water surface.
-     * NO THROTTLING - maximum aggression for instant surface restoration.
+     * BALANCED THROTTLING - fast restoration without server impact.
      */
     public static void processUltraInstantOceanSurfaceLeveling(ServerLevel level) {
         if (!enabled || !FlowingFluidsIntegration.isFlowingFluidsLoaded()) {
             return;
         }
         
-        // NO TICK THROTTLING - process every single tick for instant response
+        // 5-TICK RESTORATION: Balanced capacity for smooth 5-tick ocean surface restoration
         int filled = 0;
-        int maxPerTick = 5000; // Aggressive but reasonable capacity
+        int maxPerTick = 4000; // Balanced capacity for 5-tick restoration
         
         for (var player : level.players()) {
             if (filled >= maxPerTick) break;
             
             BlockPos playerPos = player.blockPosition();
-            int radius = 40; // Reasonable radius to cover ocean surface around player
+            int radius = 45; // Balanced radius for 5-tick ocean surface restoration
             
             // FOCUS ON Y=62 and Y=63 - exact water surface restoration to achieve Y=62.5
             for (int worldY = SEA_LEVEL - 1; worldY <= SEA_LEVEL; worldY++) { // Y=62 and Y=63 only
@@ -1435,17 +1435,16 @@ public class OceanRiverWaterReplenishment {
                     FluidState fluidState = level.getFluidState(checkPos);
                     BlockState blockState = level.getBlockState(checkPos);
                     
-                    // ULTRA-AGGRESSIVE: Fill ANY non-source water or air at Y=62-63 instantly
-                    // This ensures perfect Y=62.5 water surface matching vanilla Minecraft exactly
+                    // INSTANT SURFACE RESTORATION: Bypass queue system for true 1-tick replenishment
+                    // This directly fills ocean surface blocks without going through the queue
                     if (blockState.isAir() || (fluidState.is(Fluids.FLOWING_WATER) && !fluidState.isSource())) {
-                        // INSTANT FILL - no conditions, no delays, no prioritization
-                        // Every hole at Y=62-63 gets filled immediately for exact Y=62.5 surface
+                        // DIRECT FILL: Place full source block immediately for Y=62.5 surface
                         level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
                         filled++;
                         
-                        // DEBUG: Log every 10 fills to see if method is working
-                        if (filled % 10 == 0) {
-                            LOGGER.warn("ULTRA-INSTANT METHOD WORKING: filled {} blocks so far at {}", filled, checkPos);
+                        // DEBUG: Log every 50 fills to see if method is working
+                        if (filled % 50 == 0) {
+                            LOGGER.warn("ULTRA-INSTANT DIRECT FILL: filled {} blocks so far at {}", filled, checkPos);
                         }
                     }
                     }
