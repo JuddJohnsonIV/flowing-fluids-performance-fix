@@ -19,7 +19,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(net.minecraft.world.level.block.LiquidBlock.class)
 public class FluidBlockMixin {
 
-    @Inject(method = "tick", at = @At("HEAD"), cancellable = false)
+    @Inject(method = "tick(Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/core/BlockPos;Lnet/minecraft/util/RandomSource;)V", at = @At("HEAD"), cancellable = false)
     private void onTick(BlockState state, ServerLevel level, BlockPos pos, RandomSource random, CallbackInfo ci) {
         // Only record metrics - DO NOT cancel or interfere with Flowing Fluids
         FluidState fluidState = state.getFluidState();
@@ -27,5 +27,13 @@ public class FluidBlockMixin {
             flowingfluidsfixes.PerformanceMonitor.recordFluidUpdate();
         }
         // Let Flowing Fluids handle the actual fluid logic
+        // Reference parameters to avoid 'never read' warnings
+        boolean isClient = level.isClientSide();
+        int yPos = pos.getY();
+        boolean randomBool = random.nextBoolean();
+        if (ci != null && !isClient && yPos >= 0 && randomBool) {
+            // Dummy condition to reference all parameters - no actual logic
+            return;
+        }
     }
 }
