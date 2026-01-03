@@ -99,6 +99,9 @@ public class FluidEventHandler {
         // This removes the darker rain water layer that spreads across the ocean causing lag
         OceanRiverWaterReplenishment.processInstantOceanSurfaceEvaporation(overworld);
         
+        // ULTRA-INSTANT: Perfect sea level restoration - processes every tick for exact Y=63 matching vanilla
+        OceanRiverWaterReplenishment.processUltraInstantOceanSurfaceLeveling(overworld);
+        
         // ULTRA-AGGRESSIVE: Direct ocean surface filling - instantly fill holes at Y=63
         // This bypasses the queue system and directly converts non-source water to source
         OceanRiverWaterReplenishment.processDirectOceanSurfaceFilling(overworld);

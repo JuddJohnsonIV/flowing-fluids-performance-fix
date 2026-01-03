@@ -64,7 +64,7 @@ public class OceanRiverWaterReplenishment {
     private static final int RAIN_WATER_REMOVAL_RADIUS = 40; // Reduced radius for rain water removal
     private static final int THIN_LAYER_LEVELING_RADIUS = 24; // Reduced radius for thin layer leveling
     private static final int OCEAN_SURFACE_EVAPORATION_RADIUS = 64; // Reduced radius for evaporation
-    private static final int OCEAN_SURFACE_FILLING_RADIUS = 32; // Reduced radius for direct filling
+    private static final int OCEAN_SURFACE_FILLING_RADIUS = 64; // Increased radius to handle expanding dips
     
     /**
      * Check if a position is eligible for water replenishment.
@@ -1291,7 +1291,7 @@ public class OceanRiverWaterReplenishment {
         }
         
         int filled = 0;
-        int maxPerTick = 10000; // Extremely aggressive - fill as many holes as possible
+        int maxPerTick = 20000; // Ultra-aggressive - doubled to handle expanding dips
         
         for (var player : level.players()) {
             if (filled >= maxPerTick) break;
@@ -1337,11 +1337,9 @@ public class OceanRiverWaterReplenishment {
                                 level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
                                 filled++;
                             } else if (sourceNeighbors >= 1) {
-                                // Edge area - fill but with lower priority (check every other tick)
-                                if (level.getGameTime() % 2 == 0) {
-                                    level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
-                                    filled++;
-                                }
+                                // Edge area - instant fill for rapid dip recovery
+                                level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
+                                filled++;
                             } else {
                                 // 0 sources: ULTRA-AGGRESSIVE fill for ocean surface leveling at Y=63
                                 // This ensures smooth ocean height by filling isolated surface holes immediately
@@ -1359,6 +1357,63 @@ public class OceanRiverWaterReplenishment {
         
         if (filled > 0) {
             LOGGER.debug("Directly filled {} ocean/river surface holes at Y levels {}-{}", filled, SEA_LEVEL - 1, SEA_LEVEL + 2);
+        }
+    }
+    
+    /**
+     * ULTRA-INSTANT OCEAN SURFACE LEVELING
+     * 
+     * Processes EVERY SINGLE TICK to ensure ocean surface is perfectly flat at Y=63
+     * This matches vanilla Minecraft sea level exactly and prevents any dips from forming.
+     * NO THROTTLING - maximum aggression for instant surface restoration.
+     */
+    public static void processUltraInstantOceanSurfaceLeveling(ServerLevel level) {
+        if (!enabled || !FlowingFluidsIntegration.isFlowingFluidsLoaded()) {
+            return;
+        }
+        
+        // NO TICK THROTTLING - process every single tick for instant response
+        int filled = 0;
+        int maxPerTick = 50000; // Maximum capacity - no limits on surface restoration
+        
+        for (var player : level.players()) {
+            if (filled >= maxPerTick) break;
+            
+            BlockPos playerPos = player.blockPosition();
+            int radius = 80; // Very large radius to catch expanding dips early
+            
+            // FOCUS EXCLUSIVELY on Y=63 - vanilla Minecraft sea level
+            int worldY = SEA_LEVEL; // Exactly Y=63
+            for (int dx = -radius; dx <= radius && filled < maxPerTick; dx++) {
+                for (int dz = -radius; dz <= radius && filled < maxPerTick; dz++) {
+                    BlockPos checkPos = new BlockPos(
+                        playerPos.getX() + dx, 
+                        worldY, 
+                        playerPos.getZ() + dz
+                    );
+                    
+                    if (!level.isLoaded(checkPos)) continue;
+                    
+                    // Process in ocean AND river biomes for complete coverage
+                    if (!BiomeOptimization.isOceanOrRiverBiome(level, checkPos)) continue;
+                    
+                    FluidState fluidState = level.getFluidState(checkPos);
+                    BlockState blockState = level.getBlockState(checkPos);
+                    
+                    // ULTRA-AGGRESSIVE: Fill ANY non-source water or air at Y=63 instantly
+                    // This ensures perfect ocean surface matching vanilla Minecraft
+                    if (blockState.isAir() || (fluidState.is(Fluids.FLOWING_WATER) && !fluidState.isSource())) {
+                        // INSTANT FILL - no conditions, no delays, no prioritization
+                        // Every hole at Y=63 gets filled immediately
+                        level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
+                        filled++;
+                    }
+                }
+            }
+        }
+        
+        if (filled > 0) {
+            LOGGER.debug("Ultra-instant ocean surface leveling filled {} holes at exact sea level Y={}", filled, SEA_LEVEL);
         }
     }
     
