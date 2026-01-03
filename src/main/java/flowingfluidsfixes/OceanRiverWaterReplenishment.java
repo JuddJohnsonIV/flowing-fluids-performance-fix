@@ -570,12 +570,13 @@ public class OceanRiverWaterReplenishment {
     /**
      * AGGRESSIVE SHORE WATER REPLENISHMENT AT SEA LEVEL
      * 
-     * Specifically targets Y=63 to prevent shore water depletion.
-     * This method replenishes water at sea level faster than it can be drained,
-     * ensuring the shore line maintains proper water levels.
+     * Specifically targets Y=63 and below to prevent shore water depletion.
+     * This method replenishes water at sea level AND fills vertical gaps
+     * between sea level and the actual water surface to eliminate dips.
      * 
      * This addresses the issue where shore water is being depleted faster
-     * than the top layer at Y=63 is being replenished.
+     * than the top layer at Y=63 is being replenished, and eliminates
+     * persistent dips in the water surface.
      * 
      * OPTIMIZED: Runs every 3 ticks to balance performance with effectiveness.
      */
@@ -598,62 +599,63 @@ public class OceanRiverWaterReplenishment {
             BlockPos playerPos = player.blockPosition();
             int radius = SHORE_WATER_LEVELING_RADIUS; // Use existing radius
             
-            // Focus specifically on Y=63 (sea level) for shore replenishment
-            int worldY = SEA_LEVEL;
-            for (int dx = -radius; dx <= radius && filled < maxPerTick; dx += 1) { // Single block precision
-                for (int dz = -radius; dz <= radius && filled < maxPerTick; dz += 1) {
-                    BlockPos checkPos = new BlockPos(
-                        playerPos.getX() + dx, 
-                        worldY, 
-                        playerPos.getZ() + dz
-                    );
-                    
-                    if (!level.isLoaded(checkPos)) continue;
-                    
-                    // Only process in ocean and river biomes (shore areas)
-                    if (!BiomeOptimization.isOceanOrRiverBiome(level, checkPos)) continue;
-                    
-                    FluidState fluidState = level.getFluidState(checkPos);
-                    BlockState blockState = level.getBlockState(checkPos);
-                    
-                    // AGGRESSIVE: Fill any air or non-source water at sea level in shore biomes
-                    if (blockState.isAir() || (fluidState.is(Fluids.FLOWING_WATER) && !fluidState.isSource())) {
-                        // Check if this should be water (near ocean/river or has water neighbors)
+            // ENHANCED: Process from sea level (63) down to find and fill gaps
+            for (int worldY = SEA_LEVEL; worldY >= SEA_LEVEL - 8 && filled < maxPerTick; worldY--) { // Check 8 blocks below sea level
+                for (int dx = -radius; dx <= radius && filled < maxPerTick; dx += 1) { // Single block precision
+                    for (int dz = -radius; dz <= radius && filled < maxPerTick; dz += 1) {
+                        BlockPos checkPos = new BlockPos(
+                            playerPos.getX() + dx, 
+                            worldY, 
+                            playerPos.getZ() + dz
+                        );
                         
-                        // Method 1: Check if surrounded by water (shore area)
-                        int waterNeighbors = countAdjacentWaterSources(level, checkPos);
-                        if (waterNeighbors >= 1) { // Very low threshold for shore areas
-                            level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
-                            filled++;
-                            continue; // Skip other checks if already filled
-                        }
+                        if (!level.isLoaded(checkPos)) continue;
                         
-                        // Method 2: Check if near ocean/river water (within 2 blocks)
-                        boolean nearWater = false;
-                        for (int ox = -2; ox <= 2; ox++) {
-                            for (int oz = -2; oz <= 2; oz++) {
-                                BlockPos nearPos = checkPos.offset(ox, 0, oz);
-                                if (level.isLoaded(nearPos)) {
-                                    FluidState nearFluid = level.getFluidState(nearPos);
-                                    if (nearFluid.is(Fluids.WATER) || nearFluid.is(Fluids.FLOWING_WATER)) {
-                                        nearWater = true;
-                                        break;
+                        // Only process in ocean and river biomes (shore areas)
+                        if (!BiomeOptimization.isOceanOrRiverBiome(level, checkPos)) continue;
+                        
+                        FluidState fluidState = level.getFluidState(checkPos);
+                        BlockState blockState = level.getBlockState(checkPos);
+                        
+                        // AGGRESSIVE: Fill any air or non-source water in shore biomes
+                        if (blockState.isAir() || (fluidState.is(Fluids.FLOWING_WATER) && !fluidState.isSource())) {
+                            // Check if this should be water (near ocean/river or has water neighbors)
+                            
+                            // Method 1: Check if surrounded by water (shore area)
+                            int waterNeighbors = countAdjacentWaterSources(level, checkPos);
+                            if (waterNeighbors >= 1) { // Very low threshold for shore areas
+                                level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
+                                filled++;
+                                continue; // Skip other checks if already filled
+                            }
+                            
+                            // Method 2: Check if near ocean/river water (within 2 blocks)
+                            boolean nearWater = false;
+                            for (int ox = -2; ox <= 2; ox++) {
+                                for (int oz = -2; oz <= 2; oz++) {
+                                    BlockPos nearPos = checkPos.offset(ox, 0, oz);
+                                    if (level.isLoaded(nearPos)) {
+                                        FluidState nearFluid = level.getFluidState(nearPos);
+                                        if (nearFluid.is(Fluids.WATER) || nearFluid.is(Fluids.FLOWING_WATER)) {
+                                            nearWater = true;
+                                            break;
+                                        }
                                     }
                                 }
+                                if (nearWater) break;
                             }
-                            if (nearWater) break;
-                        }
-                        
-                        if (nearWater) {
-                            level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
-                            filled++;
-                            continue; // Skip final check if already filled
-                        }
-                        
-                        // ULTRA-AGGRESSIVE: Always fill in ocean/river biomes at sea level
-                        if (BiomeOptimization.isOceanOrRiverBiome(level, checkPos)) {
-                            level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
-                            filled++;
+                            
+                            if (nearWater) {
+                                level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
+                                filled++;
+                                continue; // Skip final check if already filled
+                            }
+                            
+                            // ULTRA-AGGRESSIVE: Always fill in ocean/river biomes at or below sea level
+                            if (BiomeOptimization.isOceanOrRiverBiome(level, checkPos)) {
+                                level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
+                                filled++;
+                            }
                         }
                     }
                 }
@@ -661,7 +663,7 @@ public class OceanRiverWaterReplenishment {
         }
         
         if (filled > 0) {
-            LOGGER.debug("Aggressive shore water replenishment filled {} holes at Y={}", filled, SEA_LEVEL);
+            LOGGER.debug("Aggressive shore water replenishment filled {} holes from Y={} down to Y-8", filled, SEA_LEVEL);
         }
     }
     
