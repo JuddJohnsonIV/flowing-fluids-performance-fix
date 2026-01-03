@@ -1071,7 +1071,7 @@ public class OceanRiverWaterReplenishment {
                             // - 4+ sources: Instant fill (well-connected ocean area)
                             // - 2-3 sources: High priority fill 
                             // - 1 source: Normal fill (edge areas)
-                            // - 0 sources: Skip fill (isolated holes may be intentional)
+                            // - 0 sources: Fill for ocean surface leveling (final layer completion)
                             
                             if (sourceNeighbors >= 4) {
                                 // Well-connected area - instant fill
@@ -1087,8 +1087,17 @@ public class OceanRiverWaterReplenishment {
                                     level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
                                     filled++;
                                 }
+                            } else {
+                                // 0 sources: Fill for ocean surface leveling at Y=63 (final layer completion)
+                                // This ensures smooth ocean height by filling isolated surface holes
+                                if (worldY == SEA_LEVEL) {
+                                    // At sea level - fill isolated holes to achieve smooth surface
+                                    if (level.getGameTime() % 3 == 0) { // Slower rate to avoid overfilling
+                                        level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
+                                        filled++;
+                                    }
+                                }
                             }
-                            // sourceNeighbors == 0: Skip isolated holes to preserve intentional water features
                         }
                     }
                 }
@@ -1097,6 +1106,95 @@ public class OceanRiverWaterReplenishment {
         
         if (filled > 0) {
             LOGGER.debug("Directly filled {} ocean/river surface holes at Y levels {}-{}", filled, SEA_LEVEL - 1, SEA_LEVEL + 2);
+        }
+    }
+    
+    /**
+     * AGGRESSIVE FINAL SURFACE LEVELING
+     * 
+     * Ensures complete smooth ocean surface by aggressively filling any remaining
+     * gaps at sea level (Y=63). This method focuses specifically on the final
+     * layer completion to achieve perfect ocean height uniformity.
+     */
+    public static void processAggressiveSurfaceLeveling(ServerLevel level) {
+        if (!enabled || !FlowingFluidsIntegration.isFlowingFluidsLoaded()) {
+            return;
+        }
+        
+        // Only process every 5 ticks to balance performance with thoroughness
+        if (level.getGameTime() % 5 != 0) {
+            return;
+        }
+        
+        int filled = 0;
+        int maxPerTick = 2000; // Aggressive but controlled
+        
+        for (var player : level.players()) {
+            if (filled >= maxPerTick) break;
+            
+            BlockPos playerPos = player.blockPosition();
+            int radius = 48; // Large radius for comprehensive coverage
+            
+            // Focus specifically on sea level (Y=63) for final surface leveling
+            int worldY = SEA_LEVEL;
+            for (int dx = -radius; dx <= radius && filled < maxPerTick; dx += 3) { // Larger steps for performance
+                for (int dz = -radius; dz <= radius && filled < maxPerTick; dz += 3) {
+                    BlockPos checkPos = new BlockPos(
+                        playerPos.getX() + dx, 
+                        worldY, 
+                        playerPos.getZ() + dz
+                    );
+                    
+                    if (!level.isLoaded(checkPos)) continue;
+                    
+                    // Process in both ocean AND river biomes
+                    if (!BiomeOptimization.isOceanOrRiverBiome(level, checkPos)) continue;
+                    
+                    FluidState fluidState = level.getFluidState(checkPos);
+                    BlockState blockState = level.getBlockState(checkPos);
+                    
+                    // AGGRESSIVE: Fill any air or non-source water at sea level
+                    if (blockState.isAir() || (fluidState.is(Fluids.FLOWING_WATER) && !fluidState.isSource())) {
+                        // Check if this should be ocean water (surrounded by water or ocean biome)
+                        boolean shouldFill = false;
+                        
+                        // Method 1: Check if at least 2 adjacent blocks are water sources
+                        int waterSources = countAdjacentWaterSources(level, checkPos);
+                        if (waterSources >= 2) {
+                            shouldFill = true;
+                        } else {
+                            // Method 2: Check if most of the surrounding area (3x3x1) is water
+                            int waterCount = 0;
+                            int totalChecked = 0;
+                            for (int ox = -1; ox <= 1; ox++) {
+                                for (int oz = -1; oz <= 1; oz++) {
+                                    BlockPos surroundPos = checkPos.offset(ox, 0, oz);
+                                    if (level.isLoaded(surroundPos)) {
+                                        FluidState surroundFluid = level.getFluidState(surroundPos);
+                                        if (surroundFluid.is(Fluids.WATER) || surroundFluid.is(Fluids.FLOWING_WATER)) {
+                                            waterCount++;
+                                        }
+                                        totalChecked++;
+                                    }
+                                }
+                            }
+                            // Fill if 60% or more of surrounding area is water
+                            if (totalChecked > 0 && (double) waterCount / totalChecked >= 0.6) {
+                                shouldFill = true;
+                            }
+                        }
+                        
+                        if (shouldFill) {
+                            level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
+                            filled++;
+                        }
+                    }
+                }
+            }
+        }
+        
+        if (filled > 0) {
+            LOGGER.debug("Aggressive surface leveling filled {} holes at Y={}", filled, SEA_LEVEL);
         }
     }
     
