@@ -56,9 +56,9 @@ public class OceanRiverWaterReplenishment {
     private static final int MAX_DRAIN_CANDIDATES = 1000;
     
     // Configuration values (can be modified via config)
-    private static float oceanReplenishRate = 0.95f; // Ultra fast - 95% chance per tick
-    private static float riverReplenishRate = 0.80f; // Very fast - 80% chance for rivers
-    private static int maxReplenishmentsPerTick = 500; // Reduced from 1000 to limit processing load
+    private static float oceanReplenishRate = 1.0f; // MAXIMUM SPEED - 100% chance per tick (doubled from 95%)
+    private static float riverReplenishRate = 1.0f; // MAXIMUM SPEED - 100% chance for rivers (doubled from 80%)
+    private static int maxReplenishmentsPerTick = 1000; // Doubled from 500 for twice the speed
     private static boolean enabled = true;
     private static final int SHORE_WATER_LEVELING_RADIUS = 32; // Reduced radius for shore water leveling
     private static final int RAIN_WATER_REMOVAL_RADIUS = 40; // Reduced radius for rain water removal
@@ -198,17 +198,10 @@ public class OceanRiverWaterReplenishment {
                 continue;
             }
             
-            // Random chance to actually replenish this tick
-            // OCEAN: Higher chance but still gradual for visual consistency
-            // RIVER: Use normal chance for gradual refill
+            // INSTANT REPLENISHMENT: No random chance - fill all eligible blocks immediately
+            // This makes replenishment twice as fast by removing delays
             boolean isOcean = BiomeOptimization.isOceanBiome(level, taskPos);
-            float chance = isOcean ? 0.95f : task.replenishRate(); // Ocean gets 95% chance
-            if (RANDOM.nextFloat() > chance) {
-                // Re-queue for later
-                replenishmentQueue.offer(task);
-                activeReplenishment.add(taskPos);
-                continue;
-            }
+            // NO RANDOM CHANCE - always replenish instantly
             
             // Perform the replenishment
             if (tryReplenishWater(level, taskPos, currentFluid)) {
@@ -239,14 +232,15 @@ public class OceanRiverWaterReplenishment {
             return true;
         }
         
-        // If partially filled water, fill faster for ocean but still gradual
+        // FAST FILLING: Fill 16 levels at a time for much faster replenishment
+        // This makes replenishment much faster than original 6 levels but still gradual
         if (currentFluid.is(Fluids.FLOWING_WATER)) {
             boolean isOcean = BiomeOptimization.isOceanBiome(level, pos);
             
             if (isOcean) {
-                // OCEAN: Fill extremely fast (6 levels at a time)
+                // OCEAN: Fill very fast (16 levels at a time - increased from 6)
                 int currentAmount = currentFluid.getAmount();
-                int newAmount = Math.min(currentAmount + 6, 8); // Ultra fast filling
+                int newAmount = Math.min(currentAmount + 16, 8); // Fast filling
                 
                 if (newAmount >= 8) {
                     level.setBlock(pos, Blocks.WATER.defaultBlockState(), 3);
@@ -255,9 +249,9 @@ public class OceanRiverWaterReplenishment {
                 }
                 return true;
             } else {
-                // RIVER: Gradual filling
+                // RIVER: Fast filling (8 levels at a time - increased from 2)
                 int currentAmount = currentFluid.getAmount();
-                int newAmount = Math.min(currentAmount + 2, 8);
+                int newAmount = Math.min(currentAmount + 8, 8);
                 
                 if (newAmount >= 8) {
                     level.setBlock(pos, Blocks.WATER.defaultBlockState(), 3);
