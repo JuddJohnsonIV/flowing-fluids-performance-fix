@@ -1088,14 +1088,12 @@ public class OceanRiverWaterReplenishment {
                                     filled++;
                                 }
                             } else {
-                                // 0 sources: Fill for ocean surface leveling at Y=63 (final layer completion)
-                                // This ensures smooth ocean height by filling isolated surface holes
+                                // 0 sources: ULTRA-AGGRESSIVE fill for ocean surface leveling at Y=63
+                                // This ensures smooth ocean height by filling isolated surface holes immediately
                                 if (worldY == SEA_LEVEL) {
-                                    // At sea level - fill isolated holes to achieve smooth surface
-                                    if (level.getGameTime() % 3 == 0) { // Slower rate to avoid overfilling
-                                        level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
-                                        filled++;
-                                    }
+                                    // At sea level - instant fill isolated holes to achieve smooth surface
+                                    level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
+                                    filled++;
                                 }
                             }
                         }
@@ -1121,24 +1119,22 @@ public class OceanRiverWaterReplenishment {
             return;
         }
         
-        // Only process every 5 ticks to balance performance with thoroughness
-        if (level.getGameTime() % 5 != 0) {
-            return;
-        }
+        // ULTRA-AGGRESSIVE: Process every tick for immediate surface restoration
+        // Removed tick throttling to ensure instant hole filling
         
         int filled = 0;
-        int maxPerTick = 2000; // Aggressive but controlled
+        int maxPerTick = 3000; // Increased for more aggressive filling
         
         for (var player : level.players()) {
             if (filled >= maxPerTick) break;
             
             BlockPos playerPos = player.blockPosition();
-            int radius = 48; // Large radius for comprehensive coverage
+            int radius = 64; // Increased radius for maximum coverage
             
             // Focus specifically on sea level (Y=63) for final surface leveling
             int worldY = SEA_LEVEL;
-            for (int dx = -radius; dx <= radius && filled < maxPerTick; dx += 3) { // Larger steps for performance
-                for (int dz = -radius; dz <= radius && filled < maxPerTick; dz += 3) {
+            for (int dx = -radius; dx <= radius && filled < maxPerTick; dx += 2) { // Smaller steps for thoroughness
+                for (int dz = -radius; dz <= radius && filled < maxPerTick; dz += 2) {
                     BlockPos checkPos = new BlockPos(
                         playerPos.getX() + dx, 
                         worldY, 
@@ -1153,14 +1149,14 @@ public class OceanRiverWaterReplenishment {
                     FluidState fluidState = level.getFluidState(checkPos);
                     BlockState blockState = level.getBlockState(checkPos);
                     
-                    // AGGRESSIVE: Fill any air or non-source water at sea level
+                    // ULTRA-AGGRESSIVE: Fill any air or non-source water at sea level
                     if (blockState.isAir() || (fluidState.is(Fluids.FLOWING_WATER) && !fluidState.isSource())) {
                         // Check if this should be ocean water (surrounded by water or ocean biome)
                         boolean shouldFill = false;
                         
-                        // Method 1: Check if at least 2 adjacent blocks are water sources
+                        // Method 1: Check if at least 1 adjacent block is water source (lowered from 2)
                         int waterSources = countAdjacentWaterSources(level, checkPos);
-                        if (waterSources >= 2) {
+                        if (waterSources >= 1) {
                             shouldFill = true;
                         } else {
                             // Method 2: Check if most of the surrounding area (3x3x1) is water
@@ -1178,10 +1174,15 @@ public class OceanRiverWaterReplenishment {
                                     }
                                 }
                             }
-                            // Fill if 60% or more of surrounding area is water
-                            if (totalChecked > 0 && (double) waterCount / totalChecked >= 0.6) {
+                            // Lowered threshold: Fill if 40% or more of surrounding area is water (was 60%)
+                            if (totalChecked > 0 && (double) waterCount / totalChecked >= 0.4) {
                                 shouldFill = true;
                             }
+                        }
+                        
+                        // ULTRA-AGGRESSIVE: If in ocean biome, fill regardless of surrounding water
+                        if (!shouldFill && BiomeOptimization.isOceanBiome(level, checkPos)) {
+                            shouldFill = true;
                         }
                         
                         if (shouldFill) {
@@ -1194,7 +1195,7 @@ public class OceanRiverWaterReplenishment {
         }
         
         if (filled > 0) {
-            LOGGER.debug("Aggressive surface leveling filled {} holes at Y={}", filled, SEA_LEVEL);
+            LOGGER.debug("Ultra-aggressive surface leveling filled {} holes at Y={}", filled, SEA_LEVEL);
         }
     }
     
