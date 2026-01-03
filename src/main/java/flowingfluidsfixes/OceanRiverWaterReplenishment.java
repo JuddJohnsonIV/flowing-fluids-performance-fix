@@ -1382,10 +1382,10 @@ public class OceanRiverWaterReplenishment {
             BlockPos playerPos = player.blockPosition();
             int radius = 80; // Very large radius to catch expanding dips early
             
-            // FOCUS EXCLUSIVELY on Y=63 - vanilla Minecraft sea level
-            int worldY = SEA_LEVEL; // Exactly Y=63
-            for (int dx = -radius; dx <= radius && filled < maxPerTick; dx++) {
-                for (int dz = -radius; dz <= radius && filled < maxPerTick; dz++) {
+            // FOCUS ON Y=62, Y=63, and Y=64 - complete sea level restoration
+            for (int worldY = SEA_LEVEL - 1; worldY <= SEA_LEVEL + 1; worldY++) {
+                for (int dx = -radius; dx <= radius && filled < maxPerTick; dx++) {
+                    for (int dz = -radius; dz <= radius && filled < maxPerTick; dz++) {
                     BlockPos checkPos = new BlockPos(
                         playerPos.getX() + dx, 
                         worldY, 
@@ -1394,8 +1394,8 @@ public class OceanRiverWaterReplenishment {
                     
                     if (!level.isLoaded(checkPos)) continue;
                     
-                    // Process in ocean AND river biomes for complete coverage
-                    if (!BiomeOptimization.isOceanOrRiverBiome(level, checkPos)) continue;
+                    // Process ALL water at Y=63 - no biome restrictions for sea level restoration
+                    // This ensures perfect ocean surface matching vanilla Minecraft everywhere
                     
                     FluidState fluidState = level.getFluidState(checkPos);
                     BlockState blockState = level.getBlockState(checkPos);
@@ -1404,9 +1404,10 @@ public class OceanRiverWaterReplenishment {
                     // This ensures perfect ocean surface matching vanilla Minecraft
                     if (blockState.isAir() || (fluidState.is(Fluids.FLOWING_WATER) && !fluidState.isSource())) {
                         // INSTANT FILL - no conditions, no delays, no prioritization
-                        // Every hole at Y=63 gets filled immediately
+                        // Every hole at Y=62-64 gets filled immediately
                         level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
                         filled++;
+                    }
                     }
                 }
             }
