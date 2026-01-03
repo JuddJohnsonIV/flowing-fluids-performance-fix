@@ -319,14 +319,47 @@ public class FluidOptimizer {
 
     @SubscribeEvent
     public void onServerStopping(ServerStoppingEvent event) {
-        LOGGER.info("Server stopping, performing cleanup for FluidOptimizer");
+        LOGGER.info("Server stopping, performing comprehensive cleanup for FluidOptimizer");
         ServerLevel overworld = event.getServer().overworld();
         if (overworld != null) {
             cleanupFlowCache(overworld);
         }
         highPriorityUpdates.clear();
         standardUpdates.clear();
-        LOGGER.info("FluidOptimizer cleanup completed on server shutdown");
+        
+        // MEMORY LEAK FIX: Clean up all static collections and thread pools
+        // Thread pool and async processing
+        FluidThreadingHandler.shutdown();
+        
+        // ThreadLocal cleanup
+        FluidEventHandler.cleanup();
+        
+        // Ocean/River replenishment caches
+        OceanRiverWaterReplenishment.clearAllCaches();
+        
+        // Fluid calculation caches
+        FlowingFluidsCalculationOptimizer.clearStaticCaches();
+        FlowingFluidsCalculationOptimizer.clearCache();
+        
+        // Memory optimizer caches
+        FluidMemoryOptimizer.clearAllCaches();
+        
+        // Tick scheduler caches
+        FluidTickScheduler.clearAllCaches();
+        
+        // Multiplayer sync
+        MultiplayerFluidSync.clearPendingSync();
+        
+        // Chunk batching
+        ChunkBasedBatching.clearProcessedChunks();
+        
+        // Debug logger
+        FlowingFluidsDebugLogger.shutdown();
+        
+        // Runtime issue handler
+        RuntimeIssueHandler.clearIssues();
+        
+        LOGGER.info("FluidOptimizer comprehensive cleanup completed on server shutdown");
     }
 
     private class FluidFlowPrediction {

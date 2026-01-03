@@ -86,14 +86,11 @@ public class FluidEventHandler {
         // should merge with ocean water level to reduce constant calculations
         OceanRiverWaterReplenishment.processShoreWaterLeveling(overworld);
         
-        // NEW: Aggressive shore water replenishment at sea level to prevent depletion
+        // UNIFIED: Single powerful shore water replenishment method
+        OceanRiverWaterReplenishment.processUnifiedShoreWaterReplenishment(overworld);
+        
+        // AGGRESSIVE: Shore water replenishment at sea level to prevent depletion
         OceanRiverWaterReplenishment.processAggressiveShoreWaterReplenishment(overworld);
-        
-        // ULTRA-AGGRESSIVE: Instant ocean shore leveling for immediate flat surfaces
-        OceanRiverWaterReplenishment.processInstantOceanShoreLeveling(overworld);
-        
-        // ULTIMATE: Ocean shore flattening with maximum aggression
-        OceanRiverWaterReplenishment.processUltimateOceanShoreFlattening(overworld);
         
         // ENHANCED: Process thin layer leveling more frequently to prevent thick layer accumulation
         OceanRiverWaterReplenishment.processThinLayerLeveling(overworld);
