@@ -115,10 +115,10 @@ public class FluidEventHandler {
             OceanRiverWaterReplenishment.processAggressiveSurfaceLeveling(overworld);
         }
         
-        // DISABLED: These methods conflict with realistic water physics
-        // OceanRiverWaterReplenishment.processThinLayerLeveling(overworld);
-        // OceanRiverWaterReplenishment.processInstantOceanSurfaceEvaporation(overworld);
-        // OceanRiverWaterReplenishment.processInstantOceanSurfaceRestoration(overworld);
+        // RE-ENABLED: These methods now work with Ocean Flow Accelerator for better performance
+        OceanRiverWaterReplenishment.processThinLayerLeveling(overworld);
+        OceanRiverWaterReplenishment.processInstantOceanSurfaceEvaporation(overworld);
+        OceanRiverWaterReplenishment.processInstantOceanSurfaceRestoration(overworld);
         
         // ENHANCED: Aggressive rain water removal during rain to eliminate floating water
         OceanRiverWaterReplenishment.processRainWaterRemoval(overworld);
@@ -137,6 +137,9 @@ public class FluidEventHandler {
             if (FlowingFluidsDebugLogger.isDebugEnabled()) {
                 FlowingFluidsDebugLogger.logPerformanceSnapshot();
             }
+            
+            // Clean up ocean flow accelerator caches to prevent memory leaks
+            OceanFlowAccelerator.cleanup();
         }
     }
     
