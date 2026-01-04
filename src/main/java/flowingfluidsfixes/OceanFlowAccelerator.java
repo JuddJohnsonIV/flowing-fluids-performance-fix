@@ -30,12 +30,12 @@ public class OceanFlowAccelerator {
     
     private static final Logger LOGGER = LogManager.getLogger(OceanFlowAccelerator.class);
     
-    // Configuration for aggressive ocean flow acceleration
-    private static final int OCEAN_FLOW_ACCELERATION_RADIUS = 64; // Large radius for ocean areas
-    private static final int MIN_OCEAN_BLOCKS_FOR_ACCELERATION = 100; // Minimum blocks to trigger acceleration
-    private static final double FLOW_ACCELERATION_MULTIPLIER = 3.0; // Triple the flow speed
-    private static final double CENTER_PULL_STRENGTH = 0.15; // Additional pull towards center
-    private static final int PROCESSING_INTERVAL = 4; // Process every 4 ticks to balance performance
+    // Configuration constants
+    private static final int OCEAN_FLOW_ACCELERATION_RADIUS = 64; // Radius to search for ocean areas
+    private static final int MIN_OCEAN_BLOCKS_FOR_ACCELERATION = 100; // Minimum ocean blocks to trigger acceleration
+    private static final double FLOW_ACCELERATION_MULTIPLIER = 5.0; // Increased from 3.0 for more aggressive acceleration
+    private static final double CENTER_PULL_STRENGTH = 0.3; // Increased from 0.15 for stronger center pulling
+    private static final int PROCESSING_INTERVAL = 2; // Process every 2 ticks instead of 4 for more frequent updates
     
     // Cache for ocean center points to avoid recalculation
     private static final ConcurrentHashMap<String, BlockPos> oceanCenterCache = new ConcurrentHashMap<>();
@@ -253,7 +253,7 @@ public class OceanFlowAccelerator {
         // Check if recently processed (avoid duplicate work)
         long currentTime = level.getGameTime();
         Long lastProcessed = lastProcessedTime.get(pos);
-        if (lastProcessed != null && currentTime - lastProcessed < 10) { // Reduced from 20 to 10 seconds
+        if (lastProcessed != null && currentTime - lastProcessed < 5) { // Reduced from 10 to 5 seconds for more frequent processing
             return false;
         }
         
@@ -263,20 +263,31 @@ public class OceanFlowAccelerator {
             return false; // Only accelerate flowing water, not source blocks
         }
         
-        // AGGRESSIVE: Check surrounding flow values for similarity - lower threshold
+        // VERY AGGRESSIVE: Check surrounding flow values for similarity - even lower threshold
         int similarFlowCount = countSimilarFlowNeighbors(level, pos);
-        if (similarFlowCount >= 3) { // Reduced from 4 to 3 for more aggressive acceleration
+        if (similarFlowCount >= 2) { // Reduced from 3 to 2 for maximum acceleration
             return true;
         }
         
-        // NEW: Also accelerate if we're in a long gradient chain
+        // AGGRESSIVE: Always accelerate if we're in a long gradient chain
         if (isInLongGradient(level, pos)) {
             return true;
         }
         
-        // NEW: Also accelerate if flow level is very low (stagnant)
+        // AGGRESSIVE: Always accelerate if flow level is very low (stagnant)
         int currentLevel = fluidState.getAmount();
-        if (currentLevel <= 2) { // Very low flow levels indicate stagnation
+        if (currentLevel <= 3) { // Increased from 2 to 3
+            return true;
+        }
+        
+        // NEW: Accelerate if we're in a dent (low point surrounded by higher flow)
+        if (isInDent(level, pos)) {
+            return true;
+        }
+        
+        // NEW: Accelerate if we're far from hole center (needs more pull)
+        double distanceToHole = pos.distSqr(holeCenter);
+        if (distanceToHole > 400) { // More than 20 blocks away
             return true;
         }
         
@@ -305,6 +316,33 @@ public class OceanFlowAccelerator {
         }
         
         return similarCount;
+    }
+    
+    /**
+     * Check if this position is in a dent (low point surrounded by higher flow)
+     * This identifies the center of stagnant areas that need aggressive ripple effects
+     */
+    private static boolean isInDent(ServerLevel level, BlockPos pos) {
+        int currentLevel = level.getFluidState(pos).getAmount();
+        int higherNeighbors = 0;
+        
+        // Check all horizontal neighbors
+        for (Direction dir : Direction.Plane.HORIZONTAL) {
+            BlockPos neighborPos = pos.relative(dir);
+            if (level.isLoaded(neighborPos)) {
+                FluidState neighborFluid = level.getFluidState(neighborPos);
+                if (neighborFluid.is(Fluids.FLOWING_WATER)) {
+                    int neighborLevel = neighborFluid.getAmount();
+                    // If neighbor has significantly higher flow, this might be a dent
+                    if (neighborLevel > currentLevel + 1) {
+                        higherNeighbors++;
+                    }
+                }
+            }
+        }
+        
+        // Consider it a dent if surrounded by higher flow on 2+ sides
+        return higherNeighbors >= 2;
     }
     
     /**
@@ -375,27 +413,38 @@ public class OceanFlowAccelerator {
         dx /= distance;
         dz /= distance;
         
-        // Calculate new flow level with acceleration and center pull
+        // Calculate new flow level with aggressive ripple effects and center pull
         int currentLevel = currentFluid.getAmount();
         int newLevel = currentLevel;
         
-        // AGGRESSIVE: Apply flow acceleration multiplier
+        // VERY AGGRESSIVE: Apply ripple effect - create dramatic flow changes
         if (currentLevel > 1) {
-            // For gradients, we need to be more aggressive about breaking the pattern
-            newLevel = Math.max(1, currentLevel - 2); // Always reduce by at least 2
+            // Create ripple effect by dramatically changing flow levels
+            boolean isInDentArea = isInDent(level, pos);
+            boolean isInGradient = isInLongGradient(level, pos);
             
-            // If we're in a long gradient, be even more aggressive
-            if (isInLongGradient(level, pos)) {
-                newLevel = Math.max(1, currentLevel - 3); // Reduce by 3 for gradients
+            if (isInDentArea) {
+                // Dents need maximum disruption - create strong ripple
+                newLevel = Math.max(1, currentLevel - 4); // Reduce by 4 levels
+                LOGGER.debug("Creating ripple effect at dent {} from level {} to {}", pos, currentLevel, newLevel);
+            } else if (isInGradient) {
+                // Gradients need strong disruption to break smooth flow
+                newLevel = Math.max(1, currentLevel - 3); // Reduce by 3 levels
+                LOGGER.debug("Breaking gradient at {} from level {} to {}", pos, currentLevel, newLevel);
+            } else {
+                // General aggressive acceleration
+                newLevel = Math.max(1, currentLevel - 2); // Reduce by 2 levels
             }
         }
         
-        // Apply center pull - stronger pull towards center based on distance
+        // Apply center pull - extremely aggressive pulling toward center
         double pullStrength = CENTER_PULL_STRENGTH;
-        if (distance > 32) {
-            pullStrength *= 3.0; // Triple pull strength for distant areas (was 2.0)
+        if (distance > 48) {
+            pullStrength *= 5.0; // 5x pull strength for very distant areas
+        } else if (distance > 32) {
+            pullStrength *= 4.0; // 4x pull strength for distant areas
         } else if (distance > 16) {
-            pullStrength *= 2.5; // 2.5x pull strength for medium distance (was 1.5)
+            pullStrength *= 3.0; // 3x pull strength for medium distance
         } else if (distance > 8) {
             pullStrength *= 2.0; // 2x pull strength for close distance
         }
@@ -403,17 +452,22 @@ public class OceanFlowAccelerator {
         // Calculate flow reduction based on center pull
         int flowReduction = (int)(currentLevel * pullStrength);
         
-        // Apply directional flow towards center with more aggressive changes
+        // Apply directional flow towards center with maximum disruption
         if (dx > 0.1) { // Flow east
-            newLevel = Math.max(1, newLevel - Math.max(2, flowReduction)); // Minimum reduction of 2
+            newLevel = Math.max(1, newLevel - Math.max(3, flowReduction)); // Minimum reduction of 3
         } else if (dx < -0.1) { // Flow west
-            newLevel = Math.max(1, newLevel - Math.max(2, flowReduction)); // Minimum reduction of 2
+            newLevel = Math.max(1, newLevel - Math.max(3, flowReduction)); // Minimum reduction of 3
         }
         
         if (dz > 0.1) { // Flow south
-            newLevel = Math.max(1, newLevel - Math.max(2, flowReduction)); // Minimum reduction of 2
+            newLevel = Math.max(1, newLevel - Math.max(3, flowReduction)); // Minimum reduction of 3
         } else if (dz < -0.1) { // Flow north
-            newLevel = Math.max(1, newLevel - Math.max(2, flowReduction)); // Minimum reduction of 2
+            newLevel = Math.max(1, newLevel - Math.max(3, flowReduction)); // Minimum reduction of 3
+        }
+        
+        // NEW: Create ripple effect on neighbors to propagate the disturbance
+        if (newLevel != currentLevel) {
+            createRippleEffect(level, pos, newLevel, holeCenter);
         }
         
         // Update the block if flow level changed
@@ -427,6 +481,78 @@ public class OceanFlowAccelerator {
             
             LOGGER.debug("Accelerated flow at {} from level {} to {} towards hole center {}", 
                 pos, currentLevel, newLevel, holeCenter);
+        }
+    }
+    
+    /**
+     * Create ripple effect on neighboring blocks to propagate flow disturbances
+     * This simulates how water ripples when it moves, breaking up stagnant areas
+     */
+    private static void createRippleEffect(ServerLevel level, BlockPos centerPos, int centerNewLevel, BlockPos holeCenter) {
+        // Create ripple on immediate neighbors to propagate the disturbance
+        for (Direction dir : Direction.Plane.HORIZONTAL) {
+            BlockPos neighborPos = centerPos.relative(dir);
+            if (level.isLoaded(neighborPos)) {
+                FluidState neighborFluid = level.getFluidState(neighborPos);
+                if (neighborFluid.is(Fluids.FLOWING_WATER) && !neighborFluid.isSource()) {
+                    int neighborCurrentLevel = neighborFluid.getAmount();
+                    
+                    // Calculate ripple strength based on distance from center
+                    double rippleStrength = 0.5; // 50% of the center's change
+                    int levelChange = (int)((centerNewLevel - neighborCurrentLevel) * rippleStrength);
+                    
+                    // Apply ripple if it creates a significant change
+                    if (Math.abs(levelChange) >= 1) {
+                        int rippleNewLevel = Math.max(1, Math.min(7, neighborCurrentLevel + levelChange));
+                        
+                        // Apply ripple to neighbor
+                        BlockState rippleState = Blocks.WATER.defaultBlockState()
+                            .setValue(net.minecraft.world.level.block.LiquidBlock.LEVEL, 8 - rippleNewLevel);
+                        
+                        level.setBlock(neighborPos, rippleState, 3);
+                        lastProcessedTime.put(neighborPos, level.getGameTime());
+                        
+                        LOGGER.debug("Applied ripple at {} from level {} to {}", neighborPos, neighborCurrentLevel, rippleNewLevel);
+                        
+                        // Create secondary ripple on diagonal neighbors for wider propagation
+                        createSecondaryRipple(level, neighborPos, holeCenter);
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Create secondary ripple on diagonal neighbors for wider disturbance propagation
+     */
+    private static void createSecondaryRipple(ServerLevel level, BlockPos centerPos, BlockPos holeCenter) {
+        // Check diagonal positions for secondary ripple
+        int[][] diagonals = {{1,1}, {1,-1}, {-1,1}, {-1,-1}};
+        
+        for (int[] diagonal : diagonals) {
+            BlockPos diagonalPos = centerPos.offset(diagonal[0], 0, diagonal[1]);
+            if (level.isLoaded(diagonalPos)) {
+                FluidState diagonalFluid = level.getFluidState(diagonalPos);
+                if (diagonalFluid.is(Fluids.FLOWING_WATER) && !diagonalFluid.isSource()) {
+                    int diagonalCurrentLevel = diagonalFluid.getAmount();
+                    
+                    // Secondary ripple is weaker (25% of primary)
+                    double secondaryStrength = 0.25;
+                    int levelChange = (int)(secondaryStrength * 2); // Small change to create disturbance
+                    
+                    if (Math.abs(levelChange) >= 1) {
+                        int secondaryNewLevel = Math.max(1, Math.min(7, diagonalCurrentLevel + levelChange));
+                        
+                        BlockState secondaryState = Blocks.WATER.defaultBlockState()
+                            .setValue(net.minecraft.world.level.block.LiquidBlock.LEVEL, 8 - secondaryNewLevel);
+                        
+                        level.setBlock(diagonalPos, secondaryState, 3);
+                        lastProcessedTime.put(diagonalPos, level.getGameTime());
+                        
+                        LOGGER.debug("Applied secondary ripple at {} from level {} to {}", diagonalPos, diagonalCurrentLevel, secondaryNewLevel);
+                    }
+                }
+            }
         }
     }
     
