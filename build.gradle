@@ -16,7 +16,7 @@ apply plugin: 'maven-publish'
 apply plugin: 'org.spongepowered.mixin'
 
 group = 'com.example'
-version = '1.2.8'
+version = '1.2.9'
 archivesBaseName = 'flowingfluidsfixes'
 
 java {
@@ -111,7 +111,7 @@ jar {
         attributes([
             "Specification-Title": "Flowing Fluids Fixes",
             "Specification-Vendor": "Example",
-            "Specification-Version": "1.2.7",
+            "Specification-Version": "1.2.9",
             "Implementation-Title": project.name,
             "Implementation-Version": project.jar.archiveVersion,
             "Implementation-Vendor": "Example",
