@@ -278,14 +278,16 @@ public class OceanRiverWaterReplenishment {
      * Attempt to replenish water at the given position.
      */
     private static boolean tryReplenishWater(ServerLevel level, BlockPos pos, FluidState currentFluid) {
-        // Must have adjacent water source OR be in ocean biome
-        if (!hasAdjacentWaterSource(level, pos) && !BiomeOptimization.isOceanBiome(level, pos)) {
+        // ENHANCED: In ocean biomes, replenish ANY water block (source or flowing) to maintain ocean surface
+        // Outside ocean biomes, require adjacent water source for more controlled replenishment
+        boolean isOcean = BiomeOptimization.isOceanBiome(level, pos);
+        if (!isOcean && !hasAdjacentWaterSource(level, pos)) {
             return false;
         }
         
         // Don't convert flowing water near sea level (preserve ocean surface)
         // BUT allow it in ocean biomes to keep up with depletion
-        if (currentFluid.is(Fluids.FLOWING_WATER) && pos.getY() >= SEA_LEVEL - 2 && pos.getY() <= SEA_LEVEL + 2 && !BiomeOptimization.isOceanBiome(level, pos)) {
+        if (currentFluid.is(Fluids.FLOWING_WATER) && pos.getY() >= SEA_LEVEL - 2 && pos.getY() <= SEA_LEVEL + 2 && !isOcean) {
             return false;
         }
         
@@ -301,8 +303,6 @@ public class OceanRiverWaterReplenishment {
         // FAST FILLING: Fill 16 levels at a time for much faster replenishment
         // This makes replenishment much faster than original 6 levels but still gradual
         if (currentFluid.is(Fluids.FLOWING_WATER)) {
-            boolean isOcean = BiomeOptimization.isOceanBiome(level, pos);
-            
             if (isOcean) {
                 // OCEAN: Fill extremely fast (32 levels at a time - for very large ocean holes)
                 int currentAmount = currentFluid.getAmount();
@@ -336,14 +336,16 @@ public class OceanRiverWaterReplenishment {
      * These blocks get immediate, aggressive filling to propagate flow quickly.
      */
     private static boolean tryUltraFastReplenishWater(ServerLevel level, BlockPos pos, FluidState currentFluid) {
-        // Must have adjacent water source OR be in ocean biome
-        if (!hasAdjacentWaterSource(level, pos) && !BiomeOptimization.isOceanBiome(level, pos)) {
+        // ENHANCED: In ocean biomes, replenish ANY water block (source or flowing) to maintain ocean surface
+        // Outside ocean biomes, require adjacent water source for more controlled replenishment
+        boolean isOcean = BiomeOptimization.isOceanBiome(level, pos);
+        if (!isOcean && !hasAdjacentWaterSource(level, pos)) {
             return false;
         }
         
         // Don't convert flowing water near sea level (preserve ocean surface)
         // BUT allow it in ocean biomes to keep up with depletion
-        if (currentFluid.is(Fluids.FLOWING_WATER) && pos.getY() >= SEA_LEVEL - 2 && pos.getY() <= SEA_LEVEL + 2 && !BiomeOptimization.isOceanBiome(level, pos)) {
+        if (currentFluid.is(Fluids.FLOWING_WATER) && pos.getY() >= SEA_LEVEL - 2 && pos.getY() <= SEA_LEVEL + 2 && !isOcean) {
             return false;
         }
         
@@ -418,7 +420,10 @@ public class OceanRiverWaterReplenishment {
             return false;
         }
         
-        return !state.isSource() && hasAdjacentWaterSource(level, pos);
+        // ENHANCED: In ocean biomes, accelerate ANY non-source water to maintain ocean surface
+        // Outside ocean biomes, require adjacent water source for more controlled acceleration
+        boolean isOcean = BiomeOptimization.isOceanBiome(level, pos);
+        return !state.isSource() && (isOcean || hasAdjacentWaterSource(level, pos));
     }
     
     /**
