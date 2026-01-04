@@ -123,6 +123,10 @@ public class FluidEventHandler {
         // ENHANCED: Aggressive rain water removal during rain to eliminate floating water
         OceanRiverWaterReplenishment.processRainWaterRemoval(overworld);
         
+        // NEW: Aggressive ocean flow acceleration for large ocean surfaces
+        // Addresses slow center-pulling in massive ocean areas with similar flow values
+        OceanFlowAccelerator.processOceanFlowAcceleration(overworld);
+        
                 
         // Log status periodically based on logging settings
         int logInterval = FlowingFluidsOptimizationConfig.enableDetailedLogging.get() ? 100 : 200;
@@ -178,6 +182,7 @@ public class FluidEventHandler {
         LOGGER.info("Cache Stats: {}", FluidTickScheduler.getCacheStats());
         LOGGER.info("Ocean/River Replenishment: enabled={}, queue={}", 
             OceanRiverWaterReplenishment.isEnabled(), OceanRiverWaterReplenishment.getQueueSize());
+        LOGGER.info("Ocean Flow Accelerator: {}", OceanFlowAccelerator.getPerformanceStats());
         LOGGER.info("===========================================");
     }
     

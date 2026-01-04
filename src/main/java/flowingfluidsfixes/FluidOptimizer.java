@@ -394,6 +394,9 @@ public class FluidOptimizer {
         // Ocean/River replenishment caches
         OceanRiverWaterReplenishment.clearAllCaches();
         
+        // Ocean flow accelerator caches
+        OceanFlowAccelerator.clearCaches();
+        
         // Fluid calculation caches
         FlowingFluidsCalculationOptimizer.clearStaticCaches();
         FlowingFluidsCalculationOptimizer.clearCache();
