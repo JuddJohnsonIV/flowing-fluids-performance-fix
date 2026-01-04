@@ -35,11 +35,11 @@ public class OceanRiverWaterReplenishment {
     // Queue of positions that need water replenishment
     // MEMORY FIX: Added hard size limits
     private static final ConcurrentLinkedQueue<ReplenishmentTask> replenishmentQueue = new ConcurrentLinkedQueue<>();
-    private static final int MAX_REPLENISHMENT_QUEUE_SIZE = 500; // Reduced from unbounded
+    private static final int MAX_REPLENISHMENT_QUEUE_SIZE = 2000; // Increased from 500 for extreme cases
     
     // Track positions currently being replenished to avoid duplicates
     private static final Set<BlockPos> activeReplenishment = ConcurrentHashMap.newKeySet();
-    private static final int MAX_ACTIVE_REPLENISHMENT_SIZE = 500; // Hard limit
+    private static final int MAX_ACTIVE_REPLENISHMENT_SIZE = 2000; // Increased from 500 for extreme cases
     
     // Track water positions above ocean that might need draining
     // Maps position -> (tick when first seen, fluid level when first seen)
@@ -54,7 +54,7 @@ public class OceanRiverWaterReplenishment {
     // Configuration values (can be modified via config)
     private static float oceanReplenishRate = 1.0f; // MAXIMUM SPEED - 100% chance per tick (doubled from 95%)
     private static float riverReplenishRate = 1.0f; // MAXIMUM SPEED - 100% chance for rivers (doubled from 80%)
-    private static int maxReplenishmentsPerTick = 1000; // Further reduced from 2000 for massive ocean areas
+    private static int maxReplenishmentsPerTick = 5000; // MASSIVE increase from 2000 for extreme flowing fluid replenishment
     private static boolean enabled = true;
     private static final int SHORE_WATER_LEVELING_RADIUS = 24; // Further reduced from 32 for massive ocean areas
     private static final int RAIN_WATER_REMOVAL_RADIUS = 40; // Reduced radius for rain water removal
@@ -303,9 +303,9 @@ public class OceanRiverWaterReplenishment {
         // This makes replenishment much faster than original 6 levels but still gradual
         if (currentFluid.is(Fluids.FLOWING_WATER)) {
             if (isOcean) {
-                // OCEAN: Fill extremely fast (32 levels at a time - for very large ocean holes)
+                // OCEAN: INSTANT filling (255 levels at a time - for extreme flowing fluid replenishment)
                 int currentAmount = currentFluid.getAmount();
-                int newAmount = Math.min(currentAmount + 32, 8); // Very fast filling for large holes
+                int newAmount = Math.min(currentAmount + 255, 8); // Instant filling for extreme cases
                 
                 if (newAmount >= 8) {
                     level.setBlock(pos, Blocks.WATER.defaultBlockState(), 3);
@@ -314,9 +314,9 @@ public class OceanRiverWaterReplenishment {
                 }
                 return true;
             } else {
-                // RIVER: Fast filling (12 levels at a time - to keep up with depletion)
+                // RIVER: EXTREME filling (128 levels at a time - for extreme depletion cases)
                 int currentAmount = currentFluid.getAmount();
-                int newAmount = Math.min(currentAmount + 12, 8);
+                int newAmount = Math.min(currentAmount + 128, 8);
                 
                 if (newAmount >= 8) {
                     level.setBlock(pos, Blocks.WATER.defaultBlockState(), 3);
@@ -356,10 +356,10 @@ public class OceanRiverWaterReplenishment {
             return true;
         }
         
-        // ULTRA-FAST FILLING: Fill 48 levels at a time for flow boundaries (for very large ocean holes)
+        // ULTRA-FAST FILLING: INSTANT filling (255 levels at a time) for flow boundaries (for extreme flowing fluid replenishment)
         if (currentFluid.is(Fluids.FLOWING_WATER)) {
             int currentAmount = currentFluid.getAmount();
-            int newAmount = Math.min(currentAmount + 48, 8); // Very fast filling for large holes
+            int newAmount = Math.min(currentAmount + 255, 8); // Instant filling for extreme cases
             
             if (newAmount >= 8) {
                 level.setBlock(pos, Blocks.WATER.defaultBlockState(), 3);

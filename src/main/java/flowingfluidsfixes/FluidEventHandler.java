@@ -77,11 +77,9 @@ public class FluidEventHandler {
         // Process multiplayer sync updates
         MultiplayerFluidSync.processPendingSync(overworld);
         
-        // OPTIMIZED: Process ocean/river water replenishments every 3 ticks to reduce FPS impact
-        // Only affects ocean/river biomes, helps reduce lag from Flowing Fluids calculations
-        if (server.getTickCount() % 3 == 0) {
-            OceanRiverWaterReplenishment.processReplenishments(overworld);
-        }
+        // AGGRESSIVE: Process ocean/river water replenishments EVERY tick for flowing fluids
+        // This ensures flowing fluids in ocean areas get replenished quickly
+        OceanRiverWaterReplenishment.processReplenishments(overworld);
         
         // OPTIMIZED: Process shore water leveling every 4 ticks to reduce FPS impact
         // Water flowing into ocean/river should merge with ocean water level
