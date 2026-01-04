@@ -58,13 +58,13 @@ public class OceanRiverWaterReplenishment {
     // Configuration values (can be modified via config)
     private static float oceanReplenishRate = 1.0f; // MAXIMUM SPEED - 100% chance per tick (doubled from 95%)
     private static float riverReplenishRate = 1.0f; // MAXIMUM SPEED - 100% chance for rivers (doubled from 80%)
-    private static int maxReplenishmentsPerTick = 2000; // Reduced from 5000 to minimize calculation load
+    private static int maxReplenishmentsPerTick = 10000; // Increased from 2000 for much faster hole filling
     private static boolean enabled = true;
-    private static final int SHORE_WATER_LEVELING_RADIUS = 16; // Reduced from 32 to minimize calculations
+    private static final int SHORE_WATER_LEVELING_RADIUS = 48; // Increased from 16 for better hole coverage
     private static final int RAIN_WATER_REMOVAL_RADIUS = 40; // Reduced radius for rain water removal
     private static final int THIN_LAYER_LEVELING_RADIUS = 24; // Reduced radius for thin layer leveling
     private static final int OCEAN_SURFACE_EVAPORATION_RADIUS = 64; // Reduced radius for evaporation
-    private static final int OCEAN_SURFACE_FILLING_RADIUS = 24; // Reduced from 64 to minimize calculations
+    private static final int OCEAN_SURFACE_FILLING_RADIUS = 96; // Increased from 24 for large hole coverage
     
     /**
      * Check if a position is eligible for water replenishment.
@@ -80,8 +80,9 @@ public class OceanRiverWaterReplenishment {
             return false;
         }
         
-        // Must be at or below sea level (STRICT: no replenishment above Y=63)
-        if (pos.getY() > SEA_LEVEL) {
+        // NO Y-level restriction for ocean biomes - fill all water holes at any depth
+        // For non-ocean biomes, keep reasonable limits
+        if (!BiomeOptimization.isOceanBiome(level, pos) && pos.getY() > SEA_LEVEL + 5) {
             return false;
         }
         
@@ -96,8 +97,8 @@ public class OceanRiverWaterReplenishment {
             }
         }
         
-        // Must have adjacent water source to draw from
-        return hasAdjacentWaterSource(level, pos);
+        // Must have adjacent water OR be in ocean biome (ocean holes should fill even without immediate adjacent water)
+        return hasAdjacentWaterSource(level, pos) || BiomeOptimization.isOceanBiome(level, pos);
     }
     
     /**
@@ -280,8 +281,14 @@ public class OceanRiverWaterReplenishment {
      * Attempt to replenish water at the given position.
      */
     private static boolean tryReplenishWater(ServerLevel level, BlockPos pos, FluidState currentFluid) {
-        // Must have adjacent water source
-        if (!hasAdjacentWaterSource(level, pos)) {
+        // Must have adjacent water source OR be in ocean biome
+        if (!hasAdjacentWaterSource(level, pos) && !BiomeOptimization.isOceanBiome(level, pos)) {
+            return false;
+        }
+        
+        // Don't convert flowing water near sea level (preserve ocean surface)
+        // BUT allow it in ocean biomes to keep up with depletion
+        if (currentFluid.is(Fluids.FLOWING_WATER) && pos.getY() >= SEA_LEVEL - 2 && pos.getY() <= SEA_LEVEL + 2 && !BiomeOptimization.isOceanBiome(level, pos)) {
             return false;
         }
         
@@ -300,9 +307,9 @@ public class OceanRiverWaterReplenishment {
             boolean isOcean = BiomeOptimization.isOceanBiome(level, pos);
             
             if (isOcean) {
-                // OCEAN: Fill very fast (16 levels at a time - increased from 6)
+                // OCEAN: Fill extremely fast (32 levels at a time - for very large ocean holes)
                 int currentAmount = currentFluid.getAmount();
-                int newAmount = Math.min(currentAmount + 16, 8); // Fast filling
+                int newAmount = Math.min(currentAmount + 32, 8); // Very fast filling for large holes
                 
                 if (newAmount >= 8) {
                     level.setBlock(pos, Blocks.WATER.defaultBlockState(), 3);
@@ -311,9 +318,9 @@ public class OceanRiverWaterReplenishment {
                 }
                 return true;
             } else {
-                // RIVER: Fast filling (8 levels at a time - increased from 2)
+                // RIVER: Fast filling (12 levels at a time - to keep up with depletion)
                 int currentAmount = currentFluid.getAmount();
-                int newAmount = Math.min(currentAmount + 8, 8);
+                int newAmount = Math.min(currentAmount + 12, 8);
                 
                 if (newAmount >= 8) {
                     level.setBlock(pos, Blocks.WATER.defaultBlockState(), 3);
@@ -332,8 +339,14 @@ public class OceanRiverWaterReplenishment {
      * These blocks get immediate, aggressive filling to propagate flow quickly.
      */
     private static boolean tryUltraFastReplenishWater(ServerLevel level, BlockPos pos, FluidState currentFluid) {
-        // Must have adjacent water source
-        if (!hasAdjacentWaterSource(level, pos)) {
+        // Must have adjacent water source OR be in ocean biome
+        if (!hasAdjacentWaterSource(level, pos) && !BiomeOptimization.isOceanBiome(level, pos)) {
+            return false;
+        }
+        
+        // Don't convert flowing water near sea level (preserve ocean surface)
+        // BUT allow it in ocean biomes to keep up with depletion
+        if (currentFluid.is(Fluids.FLOWING_WATER) && pos.getY() >= SEA_LEVEL - 2 && pos.getY() <= SEA_LEVEL + 2 && !BiomeOptimization.isOceanBiome(level, pos)) {
             return false;
         }
         
@@ -345,10 +358,10 @@ public class OceanRiverWaterReplenishment {
             return true;
         }
         
-        // ULTRA-FAST FILLING: Fill 32 levels at a time for flow boundaries
+        // ULTRA-FAST FILLING: Fill 48 levels at a time for flow boundaries (for very large ocean holes)
         if (currentFluid.is(Fluids.FLOWING_WATER)) {
             int currentAmount = currentFluid.getAmount();
-            int newAmount = Math.min(currentAmount + 32, 8); // Ultra-fast filling (instant source)
+            int newAmount = Math.min(currentAmount + 48, 8); // Very fast filling for large holes
             
             if (newAmount >= 8) {
                 level.setBlock(pos, Blocks.WATER.defaultBlockState(), 3);
@@ -680,16 +693,16 @@ public class OceanRiverWaterReplenishment {
         // }
         
         int filled = 0;
-        int maxPerTick = 3000; // Reduced from 15000 to minimize calculation load
-        int radius = 24; // Reduced from 56 to minimize calculations
+        int maxPerTick = 20000; // Increased from 3000 for ultra-fast hole filling
+        int radius = 96; // Increased from 24 for massive hole coverage
         
         for (var player : level.players()) {
             if (filled >= maxPerTick) break;
             
             BlockPos playerPos = player.blockPosition();
             
-            // UNIFIED: Process entire vertical range from sea level down
-            for (int worldY = SEA_LEVEL; worldY >= SEA_LEVEL - 10 && filled < maxPerTick; worldY--) {
+            // UNIFIED: Process entire vertical range from sea level down to fill deep ocean holes
+            for (int worldY = SEA_LEVEL; worldY >= SEA_LEVEL - 50 && filled < maxPerTick; worldY--) {
                 for (int dx = -radius; dx <= radius && filled < maxPerTick; dx += 1) { // Single block precision
                     for (int dz = -radius; dz <= radius && filled < maxPerTick; dz += 1) {
                         BlockPos checkPos = new BlockPos(
@@ -704,7 +717,8 @@ public class OceanRiverWaterReplenishment {
                         BlockState blockState = level.getBlockState(checkPos);
                         
                         // UNIFIED LOGIC: Fill any air or non-source water with smart detection
-                        if (blockState.isAir() || (fluidState.is(Fluids.FLOWING_WATER) && !fluidState.isSource())) {
+                        // BUT don't convert flowing water that's part of the filling process OR is high-level ocean water
+                        if (blockState.isAir() || (fluidState.is(Fluids.FLOWING_WATER) && !fluidState.isSource() && fluidState.getAmount() < 6 && worldY < SEA_LEVEL - 2)) {
                             boolean shouldFill = false;
                             
                             // Method 1: Check immediate neighbors for water (fastest)
@@ -775,7 +789,7 @@ public class OceanRiverWaterReplenishment {
         // }
         
         int filled = 0;
-        int maxPerTick = 1500; // Reduced from 8000 to minimize calculation load
+        int maxPerTick = 10000; // Increased from 1500 for ultra-fast hole filling
         
         for (var player : level.players()) {
             if (filled >= maxPerTick) break;
@@ -802,7 +816,8 @@ public class OceanRiverWaterReplenishment {
                     BlockState blockState = level.getBlockState(checkPos);
                     
                     // AGGRESSIVE: Fill any air or non-source water at sea level in shore biomes
-                    if (blockState.isAir() || (fluidState.is(Fluids.FLOWING_WATER) && !fluidState.isSource())) {
+                    // BUT don't convert flowing water that's part of the filling process OR is high-level ocean water
+                    if (blockState.isAir() || (fluidState.is(Fluids.FLOWING_WATER) && !fluidState.isSource() && fluidState.getAmount() < 6 && worldY < SEA_LEVEL - 2)) {
                         // Check if this should be water (near ocean/river or has water neighbors)
                         int waterNeighbors = countAdjacentWaterSources(level, checkPos);
                         if (waterNeighbors >= 1) { // Very low threshold for shore areas
