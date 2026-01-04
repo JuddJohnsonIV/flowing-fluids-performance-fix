@@ -55,13 +55,13 @@ public class OceanRiverWaterReplenishment {
     // Configuration values (can be modified via config)
     private static float oceanReplenishRate = 1.0f; // MAXIMUM SPEED - 100% chance per tick (doubled from 95%)
     private static float riverReplenishRate = 1.0f; // MAXIMUM SPEED - 100% chance for rivers (doubled from 80%)
-    private static int maxReplenishmentsPerTick = 10000; // Increased from 2000 for much faster hole filling
+    private static int maxReplenishmentsPerTick = 1000; // Further reduced from 2000 for massive ocean areas
     private static boolean enabled = true;
-    private static final int SHORE_WATER_LEVELING_RADIUS = 48; // Increased from 16 for better hole coverage
+    private static final int SHORE_WATER_LEVELING_RADIUS = 24; // Further reduced from 32 for massive ocean areas
     private static final int RAIN_WATER_REMOVAL_RADIUS = 40; // Reduced radius for rain water removal
     private static final int THIN_LAYER_LEVELING_RADIUS = 24; // Reduced radius for thin layer leveling
     private static final int OCEAN_SURFACE_EVAPORATION_RADIUS = 64; // Reduced radius for evaporation
-    private static final int OCEAN_SURFACE_FILLING_RADIUS = 96; // Increased from 24 for large hole coverage
+    private static final int OCEAN_SURFACE_FILLING_RADIUS = 32; // Further reduced from 48 for massive ocean areas
     
     /**
      * Check if a position is eligible for water replenishment.
@@ -695,8 +695,8 @@ public class OceanRiverWaterReplenishment {
         // }
         
         int filled = 0;
-        int maxPerTick = 20000; // Increased from 3000 for ultra-fast hole filling
-        int radius = 96; // Increased from 24 for massive hole coverage
+        int maxPerTick = 1500; // Further reduced from 3000 for massive ocean areas
+        int radius = 32; // Further reduced from 48 for massive ocean areas
         
         for (var player : level.players()) {
             if (filled >= maxPerTick) break;
@@ -1027,7 +1027,7 @@ public class OceanRiverWaterReplenishment {
         }
         
         int evaporated = 0;
-        int maxPerTick = 5000; // Reduced from 10000 to limit processing load
+        int maxPerTick = 1000; // Further reduced from 2000 for massive ocean areas
         
         for (var player : level.players()) {
             if (evaporated >= maxPerTick) break;
@@ -1087,39 +1087,6 @@ public class OceanRiverWaterReplenishment {
     }
     
     /**
-        );
-        
-        // Normalize and scale the direction
-        double length = Math.sqrt(flowDirection.getX() * flowDirection.getX() + 
-                                flowDirection.getY() * flowDirection.getY() + 
-                                flowDirection.getZ() * flowDirection.getZ());
-        
-        if (length > 0) {
-            // Create sparse bubble particles flowing toward ocean
-            for (int i = 0; i < 2; i++) { // Reduced to 2 particles for less spam
-                double offsetX = (RANDOM.nextDouble() - 0.5) * 0.3; // Smaller spread
-                double offsetZ = (RANDOM.nextDouble() - 0.5) * 0.3;
-                double offsetY = RANDOM.nextDouble() * 0.2; // Smaller vertical range
-                
-                // Particle position with some randomness - start from water surface
-                double particleX = waterPos.getX() + 0.5 + offsetX;
-                double particleY = waterPos.getY() + 0.1 + offsetY; // Start near water surface
-                double particleZ = waterPos.getZ() + 0.5 + offsetZ;
-                
-                // Particle velocity toward ocean with minimal upward movement
-                double velX = (flowDirection.getX() / length) * 0.05 + (RANDOM.nextDouble() - 0.5) * 0.02;
-                double velY = 0.02 + RANDOM.nextDouble() * 0.01; // Minimal upward bias for bubbles
-                double velZ = (flowDirection.getZ() / length) * 0.05 + (RANDOM.nextDouble() - 0.5) * 0.02;
-                
-            }
-        }
-    }
-    
-    
-    
-    
-
-    /**
      * ULTRA-AGGRESSIVE: Directly fill ocean surface holes at Y=62-65.
      * This bypasses the queue system and instantly converts non-source water to source blocks.
      * ENHANCED: Now handles multiple Y levels and includes river biomes for faster filling.
@@ -1130,13 +1097,18 @@ public class OceanRiverWaterReplenishment {
         }
         
         int filled = 0;
-        int maxPerTick = 20000; // Ultra-aggressive - doubled to handle expanding dips
+        int maxPerTick = 1500; // Further reduced from 3000 for massive ocean areas
         
         for (var player : level.players()) {
             if (filled >= maxPerTick) break;
             
             BlockPos playerPos = player.blockPosition();
             int radius = OCEAN_SURFACE_FILLING_RADIUS; // Use configured radius for direct filling
+            
+            // PERFORMANCE: Only process if player is near water to reduce unnecessary processing
+            if (!isPlayerNearWater(level, playerPos, radius * 2)) {
+                continue;
+            }
             
             // Check multiple Y levels around sea level (62-65) to catch missing layers
             for (int worldY = SEA_LEVEL - 1; worldY <= SEA_LEVEL + 2; worldY++) {
@@ -1447,7 +1419,7 @@ public class OceanRiverWaterReplenishment {
         
         // Process EVERY tick for instant restoration
         int filled = 0;
-        int maxPerTick = 5000; // Maximum aggressive filling
+        int maxPerTick = 1000; // Further reduced from 2000 for massive ocean areas
         
         for (var player : level.players()) {
             if (filled >= maxPerTick) break;
@@ -1484,6 +1456,31 @@ public class OceanRiverWaterReplenishment {
         if (filled > 0) {
             LOGGER.info("Instant ocean surface restoration filled {} holes at Y={}", filled, SEA_LEVEL);
         }
+    }
+    
+    /**
+     * Check if player is near water to optimize processing
+     * Only processes ocean filling when players are actually near water bodies
+     */
+    private static boolean isPlayerNearWater(ServerLevel level, BlockPos playerPos, int radius) {
+        // Quick check - sample a few points around the player for water
+        int sampleRadius = Math.min(radius, 32); // Limit sample radius for performance
+        int step = Math.max(4, sampleRadius / 8); // Sample every 4-8 blocks for speed
+        
+        for (int dx = -sampleRadius; dx <= sampleRadius; dx += step) {
+            for (int dz = -sampleRadius; dz <= sampleRadius; dz += step) {
+                for (int dy = -2; dy <= 2; dy++) { // Check 2 blocks above and below
+                    BlockPos checkPos = playerPos.offset(dx, dy, dz);
+                    if (level.isLoaded(checkPos)) {
+                        FluidState fluidState = level.getFluidState(checkPos);
+                        if (fluidState.is(Fluids.WATER) || fluidState.is(Fluids.FLOWING_WATER)) {
+                            return true; // Found water nearby
+                        }
+                    }
+                }
+            }
+        }
+        return false; // No water found in sampling area
     }
     
     /**

@@ -24,15 +24,15 @@ import java.util.concurrent.atomic.AtomicLong;
 @Mod.EventBusSubscriber(modid = "flowingfluidsfixes", bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class FluidOptimizer {
     private static final Logger LOGGER = LogManager.getLogger(FluidOptimizer.class);
-    private static final int MAX_HIGH_PRIORITY_UPDATES = 2000; // Increased from 1000 for more edge water processing
-    private static final int MAX_STANDARD_UPDATES = 3000; // Increased from 1500 for more fluid processing
+    private static final int MAX_HIGH_PRIORITY_UPDATES = 1000; // Reduced from 2000 for massive ocean areas
+    private static final int MAX_STANDARD_UPDATES = 1500; // Reduced from 3000 for massive ocean areas
     public static final double TPS_EMERGENCY_THRESHOLD = 12.0;
     private static final int EMERGENCY_MODE_THRESHOLD = 100;
     public static final int EMERGENCY_MODE_MULTIPLIER = 8;
     private static final int MIN_UPDATES_PER_TICK = 25;
     private static final long CACHE_CLEANUP_INTERVAL = 10000;
     private static final int MAX_CACHE_SIZE = 200000;
-    public static final int BASE_UPDATES_PER_TICK = 800; // Increased from 300 for faster fluid processing
+    public static final int BASE_UPDATES_PER_TICK = 400; // Further reduced from 800 for massive ocean areas
 
     private final PriorityBlockingQueue<FluidUpdate> highPriorityUpdates = new PriorityBlockingQueue<>(MAX_HIGH_PRIORITY_UPDATES, Comparator.comparingInt(FluidUpdate::getPriority).reversed());
     private final PriorityBlockingQueue<FluidUpdate> standardUpdates = new PriorityBlockingQueue<>(MAX_STANDARD_UPDATES, Comparator.comparingInt(FluidUpdate::getPriority).reversed());
@@ -68,6 +68,11 @@ public class FluidOptimizer {
 
     public void queueFluidUpdateInstance(Level worldLevel, BlockPos blockPos, FluidState fluidState, BlockState blockState, int updatePriority) {
         if (worldLevel instanceof ServerLevel serverLevel) {
+            // MASSIVE OCEAN OPTIMIZATION: Skip updates far from players
+            if (!FluidProcessingDistanceLimit.isWithinProcessingRange(blockPos)) {
+                return; // Skip distant updates to reduce load in massive ocean areas
+            }
+            
             // Check if the position is already queued to avoid duplicates
             FluidUpdate newUpdate = new FluidUpdate(serverLevel, blockPos, fluidState, blockState, updatePriority);
             if (FlowingFluidsIntegration.isFloatingWaterLayer(serverLevel, blockPos, fluidState)) {
@@ -231,28 +236,29 @@ public class FluidOptimizer {
         // Clamp to reasonable bounds
         currentThrottlingFactor = Math.max(MIN_THROTTLE, Math.min(MAX_THROTTLE, currentThrottlingFactor));
         
-        // Calculate updates with smooth throttling
-        int baseUpdates = 400; // Increased base for smoother performance
+        // Calculate updates with smooth throttling - MASSIVE OCEAN OPTIMIZATION
+        int baseUpdates = 200; // Further reduced from 400 for massive ocean areas
         int smoothedUpdates = (int) (baseUpdates * currentThrottlingFactor);
         
         // Ensure minimum updates even under heavy load
-        return Math.max(50, smoothedUpdates);
+        return Math.max(25, smoothedUpdates);
     }
     
     /**
      * Calculate target throttling factor based on TPS
      */
     private double calculateTargetThrottlingFactor(double tps) {
-        if (tps < 8.0) {
-            return 0.25; // 25% of updates under heavy load
-        } else if (tps < 12.0) {
-            return 0.5;  // 50% of updates under moderate load
-        } else if (tps < 16.0) {
-            return 0.75; // 75% of updates under light load
+        // MASSIVE OCEAN OPTIMIZATION: Much more aggressive throttling
+        if (tps < 6.0) {
+            return 0.1;  // 10% of updates under extreme load (reduced from 25%)
+        } else if (tps < 10.0) {
+            return 0.2;  // 20% of updates under heavy load (reduced from 50%)
+        } else if (tps < 14.0) {
+            return 0.4;  // 40% of updates under moderate load (reduced from 75%)
         } else if (tps < 18.0) {
-            return 1.0;  // 100% of updates near optimal
+            return 0.7;  // 70% of updates near optimal (reduced from 100%)
         } else {
-            return 1.5;  // 150% of updates when server is healthy
+            return 1.0;  // 100% of updates when server is healthy (reduced from 150%)
         }
     }
 

@@ -77,28 +77,43 @@ public class FluidEventHandler {
         // Process multiplayer sync updates
         MultiplayerFluidSync.processPendingSync(overworld);
         
-        // Process ocean/river water replenishments (ONLY affects ocean/river biomes)
-        // This helps reduce lag from Flowing Fluids calculating water holes
-        // by slowly refilling them, preserving finite water system elsewhere
-        OceanRiverWaterReplenishment.processReplenishments(overworld);
+        // OPTIMIZED: Process ocean/river water replenishments every 3 ticks to reduce FPS impact
+        // Only affects ocean/river biomes, helps reduce lag from Flowing Fluids calculations
+        if (server.getTickCount() % 3 == 0) {
+            OceanRiverWaterReplenishment.processReplenishments(overworld);
+        }
         
-        // CRITICAL: Process shore water leveling - water flowing into ocean/river
-        // should merge with ocean water level to reduce constant calculations
-        OceanRiverWaterReplenishment.processShoreWaterLeveling(overworld);
+        // OPTIMIZED: Process shore water leveling every 4 ticks to reduce FPS impact
+        // Water flowing into ocean/river should merge with ocean water level
+        if (server.getTickCount() % 4 == 0) {
+            OceanRiverWaterReplenishment.processShoreWaterLeveling(overworld);
+        }
         
-        // UNIFIED: Single powerful shore water replenishment method
-        OceanRiverWaterReplenishment.processUnifiedShoreWaterReplenishment(overworld);
+        // OPTIMIZED: Unified shore water replenishment every 5 ticks
+        if (server.getTickCount() % 5 == 0) {
+            OceanRiverWaterReplenishment.processUnifiedShoreWaterReplenishment(overworld);
+        }
         
-        // AGGRESSIVE: Shore water replenishment at sea level to prevent depletion
-        OceanRiverWaterReplenishment.processAggressiveShoreWaterReplenishment(overworld);
+        // OPTIMIZED: Aggressive shore water replenishment every 6 ticks
+        if (server.getTickCount() % 6 == 0) {
+            OceanRiverWaterReplenishment.processAggressiveShoreWaterReplenishment(overworld);
+        }
         
-        // ULTRA-INSTANT: Perfect sea level restoration - processes every 3 ticks for realistic physics
+        // OPTIMIZED: Ultra-instant sea level restoration every 3 ticks (reduced from every tick)
         // RUN FIRST to override any other water mechanics
-        OceanRiverWaterReplenishment.processUltraInstantOceanSurfaceLeveling(overworld);
+        if (server.getTickCount() % 3 == 0) {
+            OceanRiverWaterReplenishment.processUltraInstantOceanSurfaceLeveling(overworld);
+        }
         
-        // ENABLED: These aggressive methods are needed to fix ocean center filling issues
-        OceanRiverWaterReplenishment.processDirectOceanSurfaceFilling(overworld);
-        OceanRiverWaterReplenishment.processAggressiveSurfaceLeveling(overworld);
+        // OPTIMIZED: Direct ocean surface filling every 4 ticks (reduced from every tick)
+        if (server.getTickCount() % 4 == 0) {
+            OceanRiverWaterReplenishment.processDirectOceanSurfaceFilling(overworld);
+        }
+        
+        // OPTIMIZED: Aggressive surface leveling every 5 ticks (reduced from every tick)
+        if (server.getTickCount() % 5 == 0) {
+            OceanRiverWaterReplenishment.processAggressiveSurfaceLeveling(overworld);
+        }
         
         // DISABLED: These methods conflict with realistic water physics
         // OceanRiverWaterReplenishment.processThinLayerLeveling(overworld);
