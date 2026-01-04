@@ -96,11 +96,13 @@ public class FluidEventHandler {
         // RUN FIRST to override any other water mechanics
         OceanRiverWaterReplenishment.processUltraInstantOceanSurfaceLeveling(overworld);
         
-        // DISABLED: These aggressive methods conflict with realistic water physics
+        // ENABLED: These aggressive methods are needed to fix ocean center filling issues
+        OceanRiverWaterReplenishment.processDirectOceanSurfaceFilling(overworld);
+        OceanRiverWaterReplenishment.processAggressiveSurfaceLeveling(overworld);
+        
+        // DISABLED: These methods conflict with realistic water physics
         // OceanRiverWaterReplenishment.processThinLayerLeveling(overworld);
         // OceanRiverWaterReplenishment.processInstantOceanSurfaceEvaporation(overworld);
-        // OceanRiverWaterReplenishment.processDirectOceanSurfaceFilling(overworld);
-        // OceanRiverWaterReplenishment.processAggressiveSurfaceLeveling(overworld);
         // OceanRiverWaterReplenishment.processInstantOceanSurfaceRestoration(overworld);
         
         // ENHANCED: Aggressive rain water removal during rain to eliminate floating water

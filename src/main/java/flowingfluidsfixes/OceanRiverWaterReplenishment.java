@@ -1245,10 +1245,11 @@ public class OceanRiverWaterReplenishment {
                     // SMART LIMITING: Prevent expanding ring by only processing connected ocean water
                     boolean shouldFill = false;
                     boolean isInOceanBiome = BiomeOptimization.isOceanOrRiverBiome(level, checkPos);
+                    int oceanWaterCount = 0; // Move declaration here to make it available throughout the method
                     
                     if (isInOceanBiome) {
                         // In ocean biome: Check if this area has significant ocean water nearby
-                        int oceanWaterCount = 0;
+                        oceanWaterCount = 0; // Reset count
                         for (Direction dir : Direction.values()) {
                             BlockPos neighbor = checkPos.relative(dir);
                             if (level.isLoaded(neighbor)) {
@@ -1258,8 +1259,8 @@ public class OceanRiverWaterReplenishment {
                                 }
                             }
                         }
-                        // Only fill if there are 2+ ocean source blocks nearby (prevents expanding ring)
-                        if (oceanWaterCount >= 2) {
+                        // Only fill if there are 1+ ocean source blocks nearby (less restrictive for better hole filling)
+                        if (oceanWaterCount >= 1) {
                             shouldFill = true;
                         }
                     } else {
@@ -1288,7 +1289,7 @@ public class OceanRiverWaterReplenishment {
                     FluidState fluidState = level.getFluidState(checkPos);
                     BlockState blockState = level.getBlockState(checkPos);
                     
-                    // POST-DRAINAGE RESTORATION: Add water blocks above low-level water to raise surface to sea level
+                    // POST-DRAINAGE RESTORATION: Fill holes to raise surface to sea level
                     // This addresses stagnant water below sea level after drainage stops
                     if (blockState.isAir() || (fluidState.is(Fluids.FLOWING_WATER) && !fluidState.isSource())) {
                         // Check if there's water below that needs surface restoration
@@ -1304,6 +1305,17 @@ public class OceanRiverWaterReplenishment {
                                 // DEBUG: Log every 50 fills to see if method is working
                                 if (filled % 50 == 0) {
                                     LOGGER.warn("POST-DRAINAGE RESTORATION: filled {} blocks to raise surface at {} (Y={})", filled, checkPos, worldY);
+                                }
+                            } else {
+                                // NEW: Fill center holes even if no water below - this fixes the "disappearing water" issue
+                                // For ocean biomes, fill isolated holes to complete surface
+                                if (isInOceanBiome && oceanWaterCount >= 1) {
+                                    level.setBlock(checkPos, Blocks.WATER.defaultBlockState(), 3);
+                                    filled++;
+                                    
+                                    if (filled % 50 == 0) {
+                                        LOGGER.warn("CENTER HOLE FIX: filled {} isolated ocean holes at {} (Y={})", filled, checkPos, worldY);
+                                    }
                                 }
                             }
                         }
