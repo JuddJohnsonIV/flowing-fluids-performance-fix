@@ -92,26 +92,16 @@ public class FluidEventHandler {
         // AGGRESSIVE: Shore water replenishment at sea level to prevent depletion
         OceanRiverWaterReplenishment.processAggressiveShoreWaterReplenishment(overworld);
         
-        // ULTRA-INSTANT: Perfect sea level restoration - processes every tick for exact Y=63 matching vanilla
+        // ULTRA-INSTANT: Perfect sea level restoration - processes every 3 ticks for realistic physics
         // RUN FIRST to override any other water mechanics
         OceanRiverWaterReplenishment.processUltraInstantOceanSurfaceLeveling(overworld);
         
-        // ENHANCED: Process thin layer leveling more frequently to prevent thick layer accumulation
-        OceanRiverWaterReplenishment.processThinLayerLeveling(overworld);
-        
-        // CRITICAL: Instant evaporation of thin water layers sitting on ocean surface
-        // This removes the darker rain water layer that spreads across the ocean causing lag
-        OceanRiverWaterReplenishment.processInstantOceanSurfaceEvaporation(overworld);
-        
-        // ULTRA-AGGRESSIVE: Direct ocean surface filling - instantly fill holes at Y=63
-        // This bypasses the queue system and directly converts non-source water to source
-        OceanRiverWaterReplenishment.processDirectOceanSurfaceFilling(overworld);
-        
-        // AGGRESSIVE: Final surface leveling for complete smooth ocean height
-        OceanRiverWaterReplenishment.processAggressiveSurfaceLeveling(overworld);
-        
-        // INSTANT: Ultimate surface restoration to eliminate any remaining dips
-        OceanRiverWaterReplenishment.processInstantOceanSurfaceRestoration(overworld);
+        // DISABLED: These aggressive methods conflict with realistic water physics
+        // OceanRiverWaterReplenishment.processThinLayerLeveling(overworld);
+        // OceanRiverWaterReplenishment.processInstantOceanSurfaceEvaporation(overworld);
+        // OceanRiverWaterReplenishment.processDirectOceanSurfaceFilling(overworld);
+        // OceanRiverWaterReplenishment.processAggressiveSurfaceLeveling(overworld);
+        // OceanRiverWaterReplenishment.processInstantOceanSurfaceRestoration(overworld);
         
         // ENHANCED: Aggressive rain water removal during rain to eliminate floating water
         OceanRiverWaterReplenishment.processRainWaterRemoval(overworld);

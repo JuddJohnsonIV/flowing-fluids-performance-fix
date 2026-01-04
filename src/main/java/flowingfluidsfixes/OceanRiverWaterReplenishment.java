@@ -58,13 +58,13 @@ public class OceanRiverWaterReplenishment {
     // Configuration values (can be modified via config)
     private static float oceanReplenishRate = 1.0f; // MAXIMUM SPEED - 100% chance per tick (doubled from 95%)
     private static float riverReplenishRate = 1.0f; // MAXIMUM SPEED - 100% chance for rivers (doubled from 80%)
-    private static int maxReplenishmentsPerTick = 1000; // Doubled from 500 for twice the speed
+    private static int maxReplenishmentsPerTick = 2000; // Reduced from 5000 to minimize calculation load
     private static boolean enabled = true;
-    private static final int SHORE_WATER_LEVELING_RADIUS = 32; // Reduced radius for shore water leveling
+    private static final int SHORE_WATER_LEVELING_RADIUS = 16; // Reduced from 32 to minimize calculations
     private static final int RAIN_WATER_REMOVAL_RADIUS = 40; // Reduced radius for rain water removal
     private static final int THIN_LAYER_LEVELING_RADIUS = 24; // Reduced radius for thin layer leveling
     private static final int OCEAN_SURFACE_EVAPORATION_RADIUS = 64; // Reduced radius for evaporation
-    private static final int OCEAN_SURFACE_FILLING_RADIUS = 64; // Increased radius to handle expanding dips
+    private static final int OCEAN_SURFACE_FILLING_RADIUS = 24; // Reduced from 64 to minimize calculations
     
     /**
      * Check if a position is eligible for water replenishment.
@@ -115,6 +115,41 @@ public class OceanRiverWaterReplenishment {
     }
     
     /**
+     * Check if position is at a fluid level boundary (adjacent to fluids with different levels)
+     * These blocks get PRIORITY replenishment for faster flow propagation
+     */
+    private static boolean isAtFluidLevelBoundary(ServerLevel level, BlockPos pos) {
+        if (!BiomeOptimization.isOceanOrRiverBiome(level, pos)) {
+            return false;
+        }
+        
+        FluidState currentFluid = level.getFluidState(pos);
+        if (currentFluid.isEmpty() || !currentFluid.is(Fluids.WATER) && !currentFluid.is(Fluids.FLOWING_WATER)) {
+            return false;
+        }
+        
+        int currentLevel = currentFluid.getAmount();
+        
+        // Check all adjacent fluids for level differences
+        for (Direction dir : Direction.values()) {
+            BlockPos adjacent = pos.relative(dir);
+            if (!level.isLoaded(adjacent)) continue;
+            
+            FluidState adjacentFluid = level.getFluidState(adjacent);
+            if (adjacentFluid.is(Fluids.WATER) || adjacentFluid.is(Fluids.FLOWING_WATER)) {
+                int adjacentLevel = adjacentFluid.getAmount();
+                
+                // PRIORITY: If there's a level difference of 2+ levels, this is a flow boundary
+                if (Math.abs(currentLevel - adjacentLevel) >= 2) {
+                    return true;
+                }
+            }
+        }
+        
+        return false;
+    }
+    
+    /**
      * Called when a non-full water block is detected in ocean/river biome.
      * Schedules it for gradual replenishment.
      */
@@ -159,6 +194,7 @@ public class OceanRiverWaterReplenishment {
     
     /**
      * Process pending replenishments - called each server tick.
+     * PRIORITY: Fluid level boundaries get processed first for faster flow propagation.
      */
     public static void processReplenishments(ServerLevel level) {
         if (!enabled || replenishmentQueue.isEmpty()) {
@@ -167,12 +203,13 @@ public class OceanRiverWaterReplenishment {
         
         int processed = 0;
         int refilled = 0;
+        int priorityProcessed = 0;
+        int maxPriorityPerTick = maxReplenishmentsPerTick / 2; // Reserve half for priority blocks
         
-        while (!replenishmentQueue.isEmpty() && processed < maxReplenishmentsPerTick) {
+        // First pass: Process fluid level boundaries with PRIORITY
+        while (!replenishmentQueue.isEmpty() && processed < maxReplenishmentsPerTick && priorityProcessed < maxPriorityPerTick) {
             ReplenishmentTask task = replenishmentQueue.poll();
-            if (task == null) {
-                break;
-            }
+            if (task == null) break;
             
             processed++;
             BlockPos taskPos = task.pos();
@@ -181,36 +218,61 @@ public class OceanRiverWaterReplenishment {
             activeReplenishment.remove(taskPos);
             
             // Verify position is still valid
-            if (!level.isLoaded(taskPos)) {
-                continue;
-            }
+            if (!level.isLoaded(taskPos)) continue;
             
             // Re-verify biome
-            if (!BiomeOptimization.isOceanOrRiverBiome(level, taskPos)) {
-                continue;
-            }
+            if (!BiomeOptimization.isOceanOrRiverBiome(level, taskPos)) continue;
             
             // Check current state
             FluidState currentFluid = level.getFluidState(taskPos);
+            if (currentFluid.is(Fluids.WATER) && currentFluid.isSource()) continue;
             
-            // If already full water source, skip
-            if (currentFluid.is(Fluids.WATER) && currentFluid.isSource()) {
-                continue;
+            // PRIORITY CHECK: Is this a fluid level boundary?
+            if (isAtFluidLevelBoundary(level, taskPos)) {
+                priorityProcessed++;
+                
+                // ULTRA-FAST replenishment for flow boundaries (32 levels at once)
+                if (tryUltraFastReplenishWater(level, taskPos, currentFluid)) {
+                    refilled++;
+                }
+            } else {
+                // Regular replenishment for non-boundary blocks
+                if (tryReplenishWater(level, taskPos, currentFluid)) {
+                    refilled++;
+                }
             }
+        }
+        
+        // Second pass: Process remaining blocks with regular speed
+        while (!replenishmentQueue.isEmpty() && processed < maxReplenishmentsPerTick) {
+            ReplenishmentTask task = replenishmentQueue.poll();
+            if (task == null) break;
             
-            // INSTANT REPLENISHMENT: No random chance - fill all eligible blocks immediately
-            // This makes replenishment twice as fast by removing delays
-            boolean isOcean = BiomeOptimization.isOceanBiome(level, taskPos);
-            // NO RANDOM CHANCE - always replenish instantly
+            processed++;
+            BlockPos taskPos = task.pos();
             
-            // Perform the replenishment
+            // Remove from active set
+            activeReplenishment.remove(taskPos);
+            
+            // Verify position is still valid
+            if (!level.isLoaded(taskPos)) continue;
+            
+            // Re-verify biome
+            if (!BiomeOptimization.isOceanOrRiverBiome(level, taskPos)) continue;
+            
+            // Check current state
+            FluidState currentFluid = level.getFluidState(taskPos);
+            if (currentFluid.is(Fluids.WATER) && currentFluid.isSource()) continue;
+            
+            // Regular replenishment
             if (tryReplenishWater(level, taskPos, currentFluid)) {
                 refilled++;
             }
         }
         
         if (refilled > 0) {
-            LOGGER.debug("Replenished {} water blocks in ocean/river biomes", refilled);
+            LOGGER.debug("Replenished {} water blocks ({} priority flow boundaries) in ocean/river biomes", 
+                refilled, priorityProcessed);
         }
     }
     
@@ -260,6 +322,40 @@ public class OceanRiverWaterReplenishment {
                 }
                 return true;
             }
+        }
+        
+        return false;
+    }
+    
+    /**
+     * ULTRA-FAST replenishment for fluid level boundaries.
+     * These blocks get immediate, aggressive filling to propagate flow quickly.
+     */
+    private static boolean tryUltraFastReplenishWater(ServerLevel level, BlockPos pos, FluidState currentFluid) {
+        // Must have adjacent water source
+        if (!hasAdjacentWaterSource(level, pos)) {
+            return false;
+        }
+        
+        BlockState currentBlock = level.getBlockState(pos);
+        
+        // If air or replaceable, place water source instantly
+        if (currentBlock.isAir() || currentBlock.canBeReplaced(Fluids.WATER)) {
+            level.setBlock(pos, Blocks.WATER.defaultBlockState(), 3);
+            return true;
+        }
+        
+        // ULTRA-FAST FILLING: Fill 32 levels at a time for flow boundaries
+        if (currentFluid.is(Fluids.FLOWING_WATER)) {
+            int currentAmount = currentFluid.getAmount();
+            int newAmount = Math.min(currentAmount + 32, 8); // Ultra-fast filling (instant source)
+            
+            if (newAmount >= 8) {
+                level.setBlock(pos, Blocks.WATER.defaultBlockState(), 3);
+            } else {
+                level.setBlock(pos, Fluids.WATER.getFlowing(newAmount, false).createLegacyBlock(), 3);
+            }
+            return true;
         }
         
         return false;
@@ -578,14 +674,14 @@ public class OceanRiverWaterReplenishment {
             return;
         }
         
-        // OPTIMIZED: Process every 2 ticks for balance of speed and performance
-        if (level.getGameTime() % 2 != 0) {
-            return;
-        }
+        // OPTIMIZED: Process every tick for maximum edge water flow speed
+        // if (level.getGameTime() % 2 != 0) {
+        //     return;
+        // }
         
         int filled = 0;
-        int maxPerTick = 8000; // High but reasonable filling capacity
-        int radius = 56; // Large radius for comprehensive coverage
+        int maxPerTick = 3000; // Reduced from 15000 to minimize calculation load
+        int radius = 24; // Reduced from 56 to minimize calculations
         
         for (var player : level.players()) {
             if (filled >= maxPerTick) break;
@@ -673,13 +769,13 @@ public class OceanRiverWaterReplenishment {
             return;
         }
         
-        // OPTIMIZED: Process every 3 ticks to reduce performance impact
-        if (level.getGameTime() % 3 != 0) {
-            return;
-        }
+        // OPTIMIZED: Process every tick for maximum edge water flow speed
+        // if (level.getGameTime() % 3 != 0) {
+        //     return;
+        // }
         
         int filled = 0;
-        int maxPerTick = 3000; // Aggressive filling
+        int maxPerTick = 1500; // Reduced from 8000 to minimize calculation load
         
         for (var player : level.players()) {
             if (filled >= maxPerTick) break;
@@ -1367,15 +1463,28 @@ public class OceanRiverWaterReplenishment {
             return;
         }
         
-        // 5-TICK RESTORATION: Balanced capacity for smooth 5-tick ocean surface restoration
+        // MULTI-TIER DISTANCE THROTTLING: Different levels for different distances
         int filled = 0;
-        int maxPerTick = 4000; // Balanced capacity for 5-tick restoration
+        int maxPerTick = 4000; // Base capacity
+        int radius = 45; // Base radius
         
         for (var player : level.players()) {
             if (filled >= maxPerTick) break;
             
             BlockPos playerPos = player.blockPosition();
-            int radius = 45; // Balanced radius for 5-tick ocean surface restoration
+            
+            // MULTI-TIER DISTANCE THROTTLING: Different levels for different distances
+            double distanceToPlayer = Math.sqrt(player.distanceToSqr(playerPos.getX(), playerPos.getY(), playerPos.getZ()));
+            if (distanceToPlayer > 100) {
+                maxPerTick = 500;  // Very slow when far (>100 blocks)
+                radius = 20;      // Smaller radius when far
+            } else if (distanceToPlayer > 50) {
+                maxPerTick = 1500; // Slow when medium distance (50-100 blocks)
+                radius = 30;      // Medium radius when medium distance
+            } else if (distanceToPlayer > 25) {
+                maxPerTick = 2500; // Slightly slower when close (25-50 blocks)
+                radius = 35;      // Slightly smaller radius when close
+            }
             
             // FOCUS ON Y=62 and Y=63 - exact water surface restoration to achieve Y=62.5
             for (int worldY = SEA_LEVEL - 1; worldY <= SEA_LEVEL; worldY++) { // Y=62 and Y=63 only

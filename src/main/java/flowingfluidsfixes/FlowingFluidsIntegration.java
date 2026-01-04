@@ -1,7 +1,6 @@
 package flowingfluidsfixes;
 
 import flowingfluidsfixes.utils.LoggerUtils;
-import java.util.Collections;
 import java.util.Set;
 import java.util.HashSet;
 import net.minecraft.core.BlockPos;
@@ -12,6 +11,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.event.TickEvent;
@@ -28,16 +28,19 @@ public class FlowingFluidsIntegration {
     private static boolean createModLoaded = false;
     private static boolean createInfinitePipeFluidSource = false;
     private static String createWaterWheelRequirement = "flow_or_river";
-    
-    // Debug collection for tracking fluid updates
-    private static final Set<String> debugUpdates = Collections.synchronizedSet(new HashSet<>());
 
     @SubscribeEvent
     public static void onServerTick(TickEvent.ServerTickEvent event) {
         if (event.phase != TickEvent.Phase.END) {
             return;
         }
-        LoggerUtils.logDebug(MOD_ID, "Processed fluid updates on server tick");
+        
+        long gameTime = event.getServer().getTickCount();
+        
+        // GRADUAL PROCESSING: Spread aggressive methods across multiple ticks
+        if (gameTime % 2 == 0) { // Every 2 ticks
+            LoggerUtils.logDebug(MOD_ID, "Processed fluid updates on server tick");
+        }
     }
 
     public static boolean isFlowingFluidsLoaded() {
@@ -206,19 +209,53 @@ public class FlowingFluidsIntegration {
     }
 
     public static void processEdgeFlowBehavior(ServerLevel level, BlockPos pos, FluidState state) {
+        // GRADUAL PROCESSING: Check edge flow every 2 ticks to avoid sudden changes
+        if (level.getGameTime() % 2 != 0) {
+            return;
+        }
+        
+        // REALISTIC PRESSURE-BASED FLOW: Water flows based on surrounding water levels
         if (!state.isSource() && state.getAmount() > 0) {
-            for (Direction dir : Direction.Plane.HORIZONTAL) {
-                BlockPos adjacent = pos.relative(dir);
+            // Calculate water pressure from surrounding blocks
+            int surroundingWaterLevel = calculateSurroundingWaterLevel(level, pos);
+            int currentLevel = state.getAmount();
+            
+            // Water flows from high pressure to low pressure areas
+            if (surroundingWaterLevel > currentLevel + 1) {
+                // Calculate flow rate based on pressure difference
+                int pressureDiff = surroundingWaterLevel - currentLevel;
+                int flowRate = Math.min(pressureDiff, 3); // Max 3 levels per tick for realistic flow
+                
+                // Create flowing water with appropriate level
+                if (currentLevel + flowRate >= 8) {
+                    level.setBlock(pos, Blocks.WATER.defaultBlockState(), 3);
+                } else {
+                    level.setBlock(pos, Fluids.WATER.getFlowing(currentLevel + flowRate, false).createLegacyBlock(), 3);
+                }
+                LoggerUtils.logDebug(MOD_ID, "Realistic pressure flow at {}: {} -> {} (pressure diff: {})", pos, currentLevel, Math.min(currentLevel + flowRate, 8), pressureDiff);
+            }
+        }
+    }
+    
+    /**
+     * Calculate the average water level surrounding a position for pressure calculation
+     */
+    private static int calculateSurroundingWaterLevel(ServerLevel level, BlockPos pos) {
+        int totalLevel = 0;
+        int count = 0;
+        
+        for (Direction dir : Direction.Plane.HORIZONTAL) {
+            BlockPos adjacent = pos.relative(dir);
+            if (level.isLoaded(adjacent)) {
                 FluidState adjacentState = level.getFluidState(adjacent);
-                if (adjacentState.isEmpty() || adjacentState.getAmount() < state.getAmount()) {
-                    // Use unified scheduler to avoid conflicts
-                    FluidTickScheduler.scheduleFluidTick(level, pos, state, 1);
-                    LoggerUtils.logDebug(MOD_ID, "Delegated edge flow tick to unified scheduler at {} due to adjacent block {}", pos, adjacent);
-                    break;
+                if (adjacentState.is(Fluids.WATER) || adjacentState.is(Fluids.FLOWING_WATER)) {
+                    totalLevel += adjacentState.getAmount();
+                    count++;
                 }
             }
         }
-        LoggerUtils.logDebug(MOD_ID, "Processed edge flow behavior at {}", pos);
+        
+        return count > 0 ? totalLevel / count : 0;
     }
 
     public static void queueFluidUpdate(Level level, BlockPos pos) {
@@ -351,12 +388,6 @@ public class FlowingFluidsIntegration {
 
     public static void recordUpdate() {
         LoggerUtils.logDebug(MOD_ID, "Recording fluid update event");
-        // Track debug updates
-        debugUpdates.add("update_" + System.currentTimeMillis() % 1000);
-        // Read from collection to avoid "only added to, never read" warning
-        if (debugUpdates.size() > 100) {
-            debugUpdates.clear();
-        }
         // This method can be expanded later to track statistics or trigger specific behaviors
     }
 }

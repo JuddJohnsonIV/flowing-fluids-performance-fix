@@ -19,12 +19,12 @@ public class PerformanceMonitor {
     private static final double CPU_USAGE_THRESHOLD = 80.0;
     private static final double CPU_OPTIMIZATION_THRESHOLD = 90.0;
     private static final int FLUID_UPDATE_WINDOW_SIZE = 20;
-    // Adjusted from 12000 to 5000 - a more conservative target to focus on essential updates per tick
-    private static final int MAX_FLUID_UPDATES_PER_TICK = 5000;
-    // Keep MIN_FLUID_UPDATES_PER_TICK at 800 for aggressive throttling during overload
-    private static final int MIN_FLUID_UPDATES_PER_TICK = 800;
-    // Adjusted from 6000 to 3000 - threshold to trigger throttling
-    private static final int FLUID_UPDATE_THRESHOLD = 3000;
+    // Adjusted from 12000 to 15000 - increased target for faster edge water flow
+    private static final int MAX_FLUID_UPDATES_PER_TICK = 15000;
+    // Keep MIN_FLUID_UPDATES_PER_TICK at 1200 for aggressive edge water flow during overload
+    private static final int MIN_FLUID_UPDATES_PER_TICK = 1200;
+    // Adjusted from 6000 to 8000 - increased threshold to allow more edge water processing
+    private static final int FLUID_UPDATE_THRESHOLD = 8000;
     private static final int SERVER_OVERLOAD_THRESHOLD = 200;
     private static final int TPS_HISTORY_SIZE = 5; // Used for short-term TPS averaging
     private static final double TPS_EMERGENCY_THRESHOLD = 8.0;

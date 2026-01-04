@@ -24,15 +24,15 @@ import java.util.concurrent.atomic.AtomicLong;
 @Mod.EventBusSubscriber(modid = "flowingfluidsfixes", bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class FluidOptimizer {
     private static final Logger LOGGER = LogManager.getLogger(FluidOptimizer.class);
-    private static final int MAX_HIGH_PRIORITY_UPDATES = 1000;
-    private static final int MAX_STANDARD_UPDATES = 1500;
+    private static final int MAX_HIGH_PRIORITY_UPDATES = 2000; // Increased from 1000 for more edge water processing
+    private static final int MAX_STANDARD_UPDATES = 3000; // Increased from 1500 for more fluid processing
     public static final double TPS_EMERGENCY_THRESHOLD = 12.0;
     private static final int EMERGENCY_MODE_THRESHOLD = 100;
     public static final int EMERGENCY_MODE_MULTIPLIER = 8;
     private static final int MIN_UPDATES_PER_TICK = 25;
     private static final long CACHE_CLEANUP_INTERVAL = 10000;
     private static final int MAX_CACHE_SIZE = 200000;
-    public static final int BASE_UPDATES_PER_TICK = 300;
+    public static final int BASE_UPDATES_PER_TICK = 800; // Increased from 300 for faster fluid processing
 
     private final PriorityBlockingQueue<FluidUpdate> highPriorityUpdates = new PriorityBlockingQueue<>(MAX_HIGH_PRIORITY_UPDATES, Comparator.comparingInt(FluidUpdate::getPriority).reversed());
     private final PriorityBlockingQueue<FluidUpdate> standardUpdates = new PriorityBlockingQueue<>(MAX_STANDARD_UPDATES, Comparator.comparingInt(FluidUpdate::getPriority).reversed());
