@@ -24,16 +24,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class ChunkBasedBatching {
     private static final Logger LOGGER = LogManager.getLogger();
     
-    // Configuration constants - increased for better performance with our optimizations
-    private static final int MAX_CHUNKS_PER_TICK = 500;  // Increased from 200
-    private static final int BASE_CHUNKS_PER_TICK = 250; // Increased from 100
-    private static final int MIN_CHUNKS_PER_TICK = 50;   // Increased from 20
-    private static final int CHUNK_BUFFER_SIZE = 10000;  // Increased from 5000
-    private static final int CHUNK_UPDATE_INTERVAL = 1;   // Reduced from 2 for more responsive updates
-    private static final double PLAYER_PROXIMITY_SQ = 8192.0; // Increased from 4096.0 (32 blocks)
-    private static final double CPU_SAVE_MODE_TPS_THRESHOLD = 8.0; // Lowered from 10.0
-    private static final long CLEANUP_INTERVAL = 30000;   // Increased from 20000
-    private static final int MAX_UPDATES_PER_CHUNK = 500;  // Increased from 200
+    // OPTIMIZED CHUNK PROCESSING LIMITS - Reduced to prevent stuttering
+    private static final int MAX_CHUNKS_PER_TICK = 200;  // Reduced from 500
+    private static final int BASE_CHUNKS_PER_TICK = 100; // Reduced from 250
+    private static final int MIN_CHUNKS_PER_TICK = 25;   // Reduced from 50
+    private static final int CHUNK_BUFFER_SIZE = 5000;  // Reduced from 10000
+    private static final int CHUNK_UPDATE_INTERVAL = 2; // Increased from 1 for less frequent updates
+    private static final double PLAYER_PROXIMITY_SQ = 4096.0; // Reduced back to 32 blocks
+    private static final double CPU_SAVE_MODE_TPS_THRESHOLD = 10.0; // Raised from 8.0
+    private static final long CLEANUP_INTERVAL = 45000;   // Increased from 30000
+    private static final int MAX_UPDATES_PER_CHUNK = 200;  // Reduced from 500
     private static final int CHUNK_SIZE = 16;
 
     // State variables
@@ -81,7 +81,7 @@ public class ChunkBasedBatching {
     }
 
     private static int calculateDynamicQueueSize() {
-        double tps = 20.0;
+        double tps = PerformanceMonitor.getAverageTPS();
         if (tps < CPU_SAVE_MODE_TPS_THRESHOLD) {
             LOGGER.warn("Server TPS critically low ({}). Setting chunk processing to minimum: {}", tps, MIN_CHUNKS_PER_TICK);
             return MIN_CHUNKS_PER_TICK;
@@ -233,17 +233,40 @@ public class ChunkBasedBatching {
         serverLevel.scheduleTick(pos, fluid, fluid.getTickDelay(serverLevel));
     }
     
+    // EFFICIENT PROXIMITY CHECKING - Cache player positions to reduce calculations
+    private static final List<BlockPos> cachedPlayerPositions = new ArrayList<>();
+    private static long lastPlayerPositionUpdate = 0;
+    private static final long PLAYER_POSITION_UPDATE_INTERVAL = 1000; // Update every 1 second
+    
     private static boolean isChunkNearPlayer(ServerLevel level, BlockPos chunkIdentifier) {
-        List<ServerPlayer> players = level.getPlayers(player -> true);
+        long currentTime = System.currentTimeMillis();
+        
+        // Update cached player positions if needed
+        if (currentTime - lastPlayerPositionUpdate > PLAYER_POSITION_UPDATE_INTERVAL) {
+            updateCachedPlayerPositions(level);
+            lastPlayerPositionUpdate = currentTime;
+        }
+        
         BlockPos chunkCenter = new BlockPos(chunkIdentifier.getX() + 8, chunkIdentifier.getY(), chunkIdentifier.getZ() + 8);
-        for (ServerPlayer player : players) {
-            BlockPos playerPos = player.blockPosition();
+        
+        // Check against cached positions for efficiency
+        for (BlockPos playerPos : cachedPlayerPositions) {
             double distanceSq = playerPos.distSqr(chunkCenter);
             if (distanceSq < PLAYER_PROXIMITY_SQ) {
                 return true;
             }
         }
         return false;
+    }
+    
+    /**
+     * Update cached player positions for efficient proximity checking
+     */
+    private static void updateCachedPlayerPositions(ServerLevel level) {
+        cachedPlayerPositions.clear();
+        for (ServerPlayer player : level.getPlayers(p -> true)) {
+            cachedPlayerPositions.add(player.blockPosition().immutable());
+        }
     }
     
     private static void cleanupProcessedChunks(@SuppressWarnings("unused") ServerLevel level) {

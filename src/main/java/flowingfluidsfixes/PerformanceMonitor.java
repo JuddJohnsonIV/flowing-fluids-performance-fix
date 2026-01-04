@@ -8,6 +8,10 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Mod.EventBusSubscriber(modid = "flowingfluidsfixes", bus = Mod.EventBusSubscriber.Bus.FORGE)
 @SuppressWarnings("all")
@@ -33,27 +37,31 @@ public class PerformanceMonitor {
     private static final long TICK_TIME_EMERGENCY_THRESHOLD = 125_000_000;
     private static final long TICK_TIME_NORMAL_THRESHOLD = 66_000_000;
 
-    private static final List<Long> tickTimes = Collections.synchronizedList(new ArrayList<>());
-    private static final List<Double> tpsValues = Collections.synchronizedList(new ArrayList<>());
-    private static final List<Double> cpuUsages = Collections.synchronizedList(new ArrayList<>());
-    private static final List<Integer> fluidUpdateCounts = Collections.synchronizedList(new ArrayList<>());
-    private static volatile double averageTPS = 20.0;
-    private static volatile double averageCPUUsage = 0.0;
-    private static volatile long averageTickTimeNanos = 0L;
-    private static volatile boolean cpuOptimizationMode = false;
-    private static volatile int fluidUpdateCount = 0;
-    private static volatile int averageFluidUpdates = 0;
-    private static volatile int currentFluidUpdateLimit = MAX_FLUID_UPDATES_PER_TICK;
-    private static volatile boolean serverOverloaded = false;
-    private static volatile boolean normalPerformance = true;
+    // LOCK-FREE PERFORMANCE TRACKING - Use atomic operations instead of synchronized blocks
+    private static final AtomicLong totalTicksMonitored = new AtomicLong(0);
+    private static final AtomicLong ticksOverTarget = new AtomicLong(0);
+    private static final AtomicLong emergencyHalts = new AtomicLong(0);
+    private static final AtomicInteger consecutiveSlowTicks = new AtomicInteger(0);
+
+    // Lock-free rolling averages using atomic references
+    private static final AtomicReference<Double> averageTPS = new AtomicReference<>(20.0);
+    private static final AtomicReference<Double> averageCPUUsage = new AtomicReference<>(0.0);
+    private static final AtomicReference<Long> averageTickTimeNanos = new AtomicReference<>(0L);
+    private static final AtomicBoolean normalPerformance = new AtomicBoolean(true);
+    private static final AtomicBoolean serverOverloaded = new AtomicBoolean(false);
+    private static final AtomicBoolean cpuOptimizationMode = new AtomicBoolean(false);
+    private static final AtomicInteger currentFluidUpdateLimit = new AtomicInteger(MAX_FLUID_UPDATES_PER_TICK);
+    private static final AtomicInteger fluidUpdateCount = new AtomicInteger(0);
     private static long lastCPUCheck = 0;
     private static long lastTick = 0;
 
-    // Metrics for Flowing Fluids optimizations
-    private static long flowingFluidsUpdates = 0;
-    private static long flowingFluidsSkippedUpdates = 0;
-    private static long flowingFluidsDelayedUpdates = 0;
-    private static double flowingFluidsTpsImpact = 0.0;
+    // LOCK-FREE ROLLING AVERAGES - Use circular buffers with atomic indices
+    private static final int WINDOW_SIZE = 100;
+    private static final double[] tpsWindow = new double[WINDOW_SIZE];
+    private static final double[] cpuWindow = new double[WINDOW_SIZE];
+    private static final long[] tickTimeWindow = new long[WINDOW_SIZE];
+    private static final AtomicInteger windowIndex = new AtomicInteger(0);
+    private static final AtomicInteger windowCount = new AtomicInteger(0);
 
     @SubscribeEvent
     public static void onServerTick(TickEvent.ServerTickEvent event) {
@@ -65,20 +73,7 @@ public class PerformanceMonitor {
         if (lastTick != 0) {
             long tickDuration = currentTime - lastTick;
             double tps = tickDuration > 0 ? 1000.0 / tickDuration : 20.0;
-            tpsValues.add(tps);
-            if (tpsValues.size() > TPS_WINDOW_SIZE) {
-                tpsValues.remove(0);
-            }
-
-            long tickTimeNanos = tickDuration * 1_000_000;
-            tickTimes.add(tickTimeNanos);
-            if (tickTimes.size() > TICK_TIME_WINDOW_SIZE) {
-                tickTimes.remove(0);
-            }
-
-            updateAverages();
-            updatePerformanceState();
-            updateFluidUpdateLimit();
+            updateMetrics(tickDuration, tps, 0.0, fluidUpdateCount.get());
         }
         lastTick = currentTime;
 
@@ -87,215 +82,159 @@ public class PerformanceMonitor {
             updateCPUUsage();
         }
 
-        fluidUpdateCount = 0;
+        fluidUpdateCount.set(0);
     }
 
-    private static synchronized void updateAverages() {
-        if (!tpsValues.isEmpty()) {
-            averageTPS = tpsValues.stream().mapToDouble(Double::doubleValue).average().orElse(20.0);
+    /**
+     * Update performance metrics without synchronization
+     */
+    public static void updateMetrics(long tickTime, double tps, double cpuUsage, int fluidUpdateCount) {
+        // Update rolling averages using lock-free circular buffer
+        int index = windowIndex.getAndIncrement() % WINDOW_SIZE;
+        int count = Math.min(windowCount.incrementAndGet(), WINDOW_SIZE);
+
+        tpsWindow[index] = tps;
+        cpuWindow[index] = cpuUsage;
+        tickTimeWindow[index] = tickTime;
+
+        // Calculate new averages
+        if (count > 0) {
+            double newTPS = 0.0;
+            double newCPU = 0.0;
+            long newTickTime = 0L;
+
+            for (int i = 0; i < count; i++) {
+                newTPS += tpsWindow[i];
+                newCPU += cpuWindow[i];
+                newTickTime += tickTimeWindow[i];
+            }
+
+            averageTPS.set(newTPS / count);
+            averageCPUUsage.set(newCPU / count);
+            averageTickTimeNanos.set(newTickTime / count);
         }
 
-        if (!tickTimes.isEmpty()) {
-            averageTickTimeNanos = (long) tickTimes.stream().mapToLong(Long::longValue).average().orElse(0.0);
-        }
-
-        if (!fluidUpdateCounts.isEmpty()) {
-            averageFluidUpdates = (int) fluidUpdateCounts.stream().mapToInt(Integer::intValue).average().orElse(0);
-        }
-
-        cpuOptimizationMode = averageCPUUsage > CPU_OPTIMIZATION_THRESHOLD || averageTPS < TPS_EMERGENCY_THRESHOLD || averageTickTimeNanos > TICK_TIME_EMERGENCY_THRESHOLD;
+        // Update performance state
+        updatePerformanceState();
+        updateFluidUpdateLimit();
     }
 
-    private static synchronized void updatePerformanceState() {
-        boolean wasNormal = normalPerformance;
-        boolean wasOverloaded = serverOverloaded;
+    /**
+     * Update performance state without synchronization
+     */
+    private static void updatePerformanceState() {
+        double currentTPS = averageTPS.get();
+        long currentTickTime = averageTickTimeNanos.get();
+        double currentCPU = averageCPUUsage.get();
 
-        normalPerformance = averageTPS >= TPS_NORMAL_THRESHOLD && 
-                           averageTickTimeNanos <= TICK_TIME_NORMAL_THRESHOLD &&
-                           averageCPUUsage <= CPU_USAGE_THRESHOLD;
+        boolean wasNormal = normalPerformance.get();
+        boolean wasOverloaded = serverOverloaded.get();
 
-        serverOverloaded = averageFluidUpdates > SERVER_OVERLOAD_THRESHOLD ||
-                          averageTPS < TPS_EMERGENCY_THRESHOLD ||
-                          averageTickTimeNanos > TICK_TIME_EMERGENCY_THRESHOLD;
+        // Update state flags atomically
+        normalPerformance.set(currentTPS >= TPS_NORMAL_THRESHOLD &&
+                currentTickTime <= TICK_TIME_NORMAL_THRESHOLD &&
+                currentCPU <= CPU_USAGE_THRESHOLD);
 
-        // Ensure recovery from overloaded state when TPS improves significantly
-        if (serverOverloaded && wasOverloaded && averageTPS > TPS_NORMAL_THRESHOLD) {
-            serverOverloaded = false;
-            LOGGER.info("Forced recovery from overloaded state due to improved TPS: {}", averageTPS);
-        }
+        serverOverloaded.set(currentTPS < TPS_EMERGENCY_THRESHOLD ||
+                currentTickTime > TICK_TIME_EMERGENCY_THRESHOLD);
 
-        if (wasNormal && !normalPerformance) {
-            LOGGER.warn("Performance degradation detected - TPS: {}, TickTime: {}ns, CPU: {}%", 
-                       String.format("%.2f", averageTPS), averageTickTimeNanos, String.format("%.1f", averageCPUUsage));
-        } else if (!wasNormal && normalPerformance) {
-            LOGGER.info("Performance returned to normal - TPS: {}", String.format("%.2f", averageTPS));
-        }
+        cpuOptimizationMode.set(currentCPU > CPU_OPTIMIZATION_THRESHOLD ||
+                currentTPS < TPS_EMERGENCY_THRESHOLD ||
+                currentTickTime > TICK_TIME_EMERGENCY_THRESHOLD);
 
-        if (!wasOverloaded && serverOverloaded) {
-            LOGGER.error("Server overload detected! Fluid updates: {}, TPS: {}", 
-                        averageFluidUpdates, String.format("%.2f", averageTPS));
-        } else if (wasOverloaded && !serverOverloaded) {
-            LOGGER.info("Server recovered from overload state");
+        // Log state changes
+        if (wasNormal && !normalPerformance.get()) {
+            LOGGER.warn("Performance degraded: TPS={}, TickTime={}ns, CPU={}%",
+                    String.format("%.2f", currentTPS), currentTickTime, String.format("%.1f", currentCPU * 100));
+        } else if (!wasNormal && normalPerformance.get()) {
+            LOGGER.info("Performance recovered: TPS={}, TickTime={}ns, CPU={}%",
+                    String.format("%.2f", currentTPS), currentTickTime, String.format("%.1f", currentCPU * 100));
         }
     }
 
-    private static synchronized void updateFluidUpdateLimit() {
-        int previousLimit = currentFluidUpdateLimit;
+    /**
+     * Update fluid update limit without synchronization
+     */
+    private static void updateFluidUpdateLimit() {
+        int previousLimit = currentFluidUpdateLimit.get();
 
-        if (serverOverloaded || cpuOptimizationMode) {
-            currentFluidUpdateLimit = MIN_FLUID_UPDATES_PER_TICK * 4; // Increased to allow more updates even under load
-        } else if (!normalPerformance) {
-            double tpsRatio = Math.min(1.0, averageTPS / 20.0);
-            currentFluidUpdateLimit = (int) (MIN_FLUID_UPDATES_PER_TICK * 2 + 
-                (FLUID_UPDATE_THRESHOLD - MIN_FLUID_UPDATES_PER_TICK) * tpsRatio);
-        } else if (averageFluidUpdates > FLUID_UPDATE_THRESHOLD) {
-            currentFluidUpdateLimit = Math.max(MIN_FLUID_UPDATES_PER_TICK * 3, 
-                currentFluidUpdateLimit - (currentFluidUpdateLimit / 10));
+        if (serverOverloaded.get() || cpuOptimizationMode.get()) {
+            currentFluidUpdateLimit.set(MIN_FLUID_UPDATES_PER_TICK);
+        } else if (normalPerformance.get()) {
+            currentFluidUpdateLimit.set(MAX_FLUID_UPDATES_PER_TICK);
         } else {
-            double tpsRatio = Math.min(1.0, averageTPS / 20.0);
-            currentFluidUpdateLimit = (int) (MIN_FLUID_UPDATES_PER_TICK * 2 + 
-                (MAX_FLUID_UPDATES_PER_TICK - MIN_FLUID_UPDATES_PER_TICK) * tpsRatio);
+            currentFluidUpdateLimit.set(MIN_FLUID_UPDATES_PER_TICK +
+                    (MAX_FLUID_UPDATES_PER_TICK - MIN_FLUID_UPDATES_PER_TICK) / 2);
         }
 
-        currentFluidUpdateLimit = Math.max(MIN_FLUID_UPDATES_PER_TICK * 3, 
-            Math.min(MAX_FLUID_UPDATES_PER_TICK, currentFluidUpdateLimit));
-
-        if (Math.abs(previousLimit - currentFluidUpdateLimit) > 1000) {
-            LOGGER.debug("Fluid update limit adjusted: {} -> {}", previousLimit, currentFluidUpdateLimit);
+        if (previousLimit != currentFluidUpdateLimit.get()) {
+            LOGGER.info("Fluid update limit changed: {} -> {}", previousLimit, currentFluidUpdateLimit.get());
         }
     }
 
-    private static synchronized void updateCPUUsage() {
+    /**
+     * Update CPU usage without synchronization
+     */
+    private static void updateCPUUsage() {
         double cpuUsage = 0.0; // Placeholder since actual CPU usage check is not available
-        cpuUsages.add(cpuUsage);
-        if (cpuUsages.size() > CPU_USAGE_WINDOW_SIZE) {
-            cpuUsages.remove(0);
-        }
-
-        averageCPUUsage = cpuUsages.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
+        int index = windowIndex.get() % WINDOW_SIZE;
+        cpuWindow[index] = cpuUsage;
     }
 
+    /**
+     * Get performance metrics without synchronization
+     */
     public static double getAverageTPS() {
-        return averageTPS;
+        return averageTPS.get();
     }
 
     public static double getAverageCPUUsage() {
-        return averageCPUUsage;
+        return averageCPUUsage.get();
     }
 
     public static long getAverageTickTime() {
-        return averageTickTimeNanos;
-    }
-
-    public static int getAverageFluidUpdates() {
-        return averageFluidUpdates;
-    }
-
-    public static boolean isCPUOptimizationMode() {
-        return cpuOptimizationMode;
-    }
-
-    public static void recordFluidUpdate() {
-        fluidUpdateCount++;
-        fluidUpdateCounts.add(fluidUpdateCount);
-        if (fluidUpdateCounts.size() > FLUID_UPDATE_WINDOW_SIZE) {
-            fluidUpdateCounts.remove(0);
-        }
-    }
-
-    public static Map<String, Object> getPerformanceStats(Level level) {
-        Map<String, Object> stats = new HashMap<>();
-        stats.put("averageTPS", averageTPS);
-        stats.put("averageTickTimeNanos", averageTickTimeNanos);
-        stats.put("averageCPUUsage", averageCPUUsage);
-        stats.put("averageFluidUpdates", averageFluidUpdates);
-        stats.put("cpuOptimizationMode", cpuOptimizationMode);
-        stats.put("currentFluidUpdateLimit", currentFluidUpdateLimit);
-        stats.put("serverOverloaded", serverOverloaded);
-        stats.put("normalPerformance", normalPerformance);
-        return stats;
+        return averageTickTimeNanos.get();
     }
 
     public static int getCurrentFluidUpdateLimit() {
-        return currentFluidUpdateLimit;
+        return currentFluidUpdateLimit.get();
     }
 
     public static boolean isServerOverloaded() {
-        return serverOverloaded;
+        return serverOverloaded.get();
     }
 
     public static boolean isNormalPerformance() {
-        return normalPerformance;
+        return normalPerformance.get();
     }
 
     public static boolean shouldThrottleFluidUpdates() {
-        return fluidUpdateCount >= currentFluidUpdateLimit;
+        return fluidUpdateCount.get() >= currentFluidUpdateLimit.get();
     }
 
     public static boolean canProcessFluidUpdate() {
-        if (fluidUpdateCount >= currentFluidUpdateLimit) {
-            if (fluidUpdateCount == currentFluidUpdateLimit) {
-                LOGGER.debug("Fluid update limit reached for this tick: {}", currentFluidUpdateLimit);
+        if (fluidUpdateCount.get() >= currentFluidUpdateLimit.get()) {
+            if (fluidUpdateCount.get() == currentFluidUpdateLimit.get()) {
+                LOGGER.debug("Fluid update limit reached for this tick: {}", currentFluidUpdateLimit.get());
             }
             return false;
         }
         return true;
     }
-
-    public static double getShortTermAverageTPS() {
-        if (tpsValues.size() < TPS_HISTORY_SIZE) {
-            return averageTPS;
-        }
-        List<Double> recentTps = tpsValues.subList(
-            Math.max(0, tpsValues.size() - TPS_HISTORY_SIZE), 
-            tpsValues.size()
-        );
-        return recentTps.stream().mapToDouble(Double::doubleValue).average().orElse(averageTPS);
+    
+    /**
+     * Increment fluid update counter for tracking
+     */
+    public static void incrementFluidUpdateCount() {
+        fluidUpdateCount.incrementAndGet();
+    }
+    
+    /**
+     * Get current fluid update count for this tick
+     */
+    public static int getFluidUpdateCount() {
+        return fluidUpdateCount.get();
     }
 
-    public static void incrementFlowingFluidsUpdates() {
-        flowingFluidsUpdates++;
-    }
 
-    public static void incrementFlowingFluidsSkippedUpdates() {
-        flowingFluidsSkippedUpdates++;
-    }
-
-    public static void incrementFlowingFluidsDelayedUpdates() {
-        flowingFluidsDelayedUpdates++;
-    }
-
-    public static void updateFlowingFluidsTpsImpact(double tpsImpact) {
-        flowingFluidsTpsImpact = tpsImpact;
-    }
-
-    public static long getFlowingFluidsUpdates() {
-        return flowingFluidsUpdates;
-    }
-
-    public static long getFlowingFluidsSkippedUpdates() {
-        return flowingFluidsSkippedUpdates;
-    }
-
-    public static long getFlowingFluidsDelayedUpdates() {
-        return flowingFluidsDelayedUpdates;
-    }
-
-    public static double getFlowingFluidsTpsImpact() {
-        return flowingFluidsTpsImpact;
-    }
-
-    // Method to log performance metrics for Flowing Fluids
-    public static void logFlowingFluidsPerformanceMetrics() {
-        LOGGER.info("Flowing Fluids Performance Metrics: Updates={}, Skipped={}, Delayed={}, TPS Impact={}", 
-            flowingFluidsUpdates, flowingFluidsSkippedUpdates, flowingFluidsDelayedUpdates, flowingFluidsTpsImpact);
-    }
-
-    // Reset metrics for Flowing Fluids
-    public static void resetFlowingFluidsMetrics() {
-        flowingFluidsUpdates = 0;
-        flowingFluidsSkippedUpdates = 0;
-        flowingFluidsDelayedUpdates = 0;
-        flowingFluidsTpsImpact = 0.0;
-    }
 }

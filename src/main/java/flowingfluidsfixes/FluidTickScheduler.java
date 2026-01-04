@@ -2,6 +2,7 @@ package flowingfluidsfixes;
 
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -95,6 +96,11 @@ public class FluidTickScheduler {
     // Sea level constant for ocean surface detection
     private static final int SEA_LEVEL = 63;
     
+    // STAGGERED CLEANUP SYSTEM - Spread cleanup over multiple ticks to prevent stuttering
+    private static final int CLEANUP_INTERVAL_TICKS = 100; // Base interval
+    private static final int CLEANUP_BATCH_SIZE = 100; // Clean 100 entries per tick
+    private static int cleanupPhase = 0; // Current cleanup phase (0-4)
+    
     /**
      * Reset time budget at the start of each server tick
      * Call this from the server tick event handler
@@ -106,69 +112,126 @@ public class FluidTickScheduler {
         fluidTimeUsedThisTick = 0;
         currentServerTick++;
         
-        // MEMORY FIX: More frequent cache cleanup every 100 ticks (5 seconds)
-        if (currentServerTick % 100 == 0) {
-            cleanupCaches();
+        // STAGGERED CLEANUP: Perform incremental cleanup every tick
+        if (currentServerTick % CLEANUP_INTERVAL_TICKS == 0) {
+            performStaggeredCleanup();
         }
     }
     
     /**
-     * Clean up expired cache entries to prevent memory bloat
-     * MEMORY FIX: More aggressive cleanup with hard size limits
+     * STAGGERED CLEANUP: Clean caches incrementally to prevent stuttering
+     * Spreads cleanup workload over multiple ticks instead of all at once
      */
-    private static void cleanupCaches() {
-        long cutoffTick = currentServerTick - 50; // Expire entries older than 2.5 seconds (more aggressive)
+    private static void performStaggeredCleanup() {
+        long cutoffTick = currentServerTick - 50; // Expire entries older than 2.5 seconds
+        long timeCutoff = System.currentTimeMillis() - 1000; // Time cutoff for recently scheduled
+        int cleanedCount = 0;
         
-        // Clean stable flow cache - enforce hard limit
-        stableFlowCache.entrySet().removeIf(e -> e.getValue().lastUpdateTick < cutoffTick);
-        if (stableFlowCache.size() > STABLE_FLOW_CACHE_MAX_SIZE) {
-            // Emergency clear if over limit
-            stableFlowCache.clear();
-            LOGGER.warn("Cleared stableFlowCache due to size limit exceeded");
+        switch (cleanupPhase) {
+            case 0: // Clean stable flow cache
+                cleanedCount = incrementalCacheCleanup(stableFlowCache, CLEANUP_BATCH_SIZE, cutoffTick);
+                if (stableFlowCache.size() > STABLE_FLOW_CACHE_MAX_SIZE) {
+                    stableFlowCache.clear();
+                    LOGGER.warn("Cleared stableFlowCache due to size limit exceeded");
+                }
+                break;
+                
+            case 1: // Clean edge fluid cache
+                cleanedCount = incrementalCacheCleanup(edgeFluidCache, CLEANUP_BATCH_SIZE, cutoffTick);
+                if (edgeFluidCache.size() > 5000) {
+                    edgeFluidCache.clear();
+                    dormantEdgeFluids.set(0);
+                    LOGGER.warn("Cleared edgeFluidCache due to size limit exceeded");
+                }
+                break;
+                
+            case 2: // Clean heavy flow zones
+                cleanedCount = incrementalCacheCleanup(heavyFlowZones, CLEANUP_BATCH_SIZE, cutoffTick);
+                if (heavyFlowZones.size() > 500) {
+                    heavyFlowZones.clear();
+                    LOGGER.warn("Cleared heavyFlowZones due to size limit exceeded");
+                }
+                break;
+                
+            case 3: // Clean recently scheduled
+                cleanedCount = incrementalMapCleanup(recentlyScheduled, CLEANUP_BATCH_SIZE, timeCutoff);
+                if (recentlyScheduled.size() > 5000) {
+                    recentlyScheduled.clear();
+                }
+                break;
+                
+            case 4: // Clean fluid change origins and deferred queue
+                cleanedCount = incrementalMapCleanup(fluidChangeOrigins, CLEANUP_BATCH_SIZE, timeCutoff);
+                if (fluidChangeOrigins.size() > 5000) {
+                    fluidChangeOrigins.clear();
+                }
+                if (deferredQueue.size() > 1000) {
+                    deferredQueue.clear();
+                    LOGGER.warn("Cleared deferredQueue due to size limit exceeded");
+                }
+                break;
         }
         
-        // Clean edge fluid cache - enforce hard limit of 5000
-        edgeFluidCache.entrySet().removeIf(e -> e.getValue().lastCheckTick < cutoffTick);
-        if (edgeFluidCache.size() > 5000) {
-            edgeFluidCache.clear();
-            dormantEdgeFluids.set(0);
-            LOGGER.warn("Cleared edgeFluidCache due to size limit exceeded");
+        // Advance to next phase
+        cleanupPhase = (cleanupPhase + 1) % 5;
+        
+        if (cleanedCount > 0) {
+            LOGGER.debug("Staggered cleanup phase {}: removed {} entries", cleanupPhase - 1, cleanedCount);
+        }
+    }
+    
+    /**
+     * Incrementally clean a cache map without causing stuttering
+     */
+    private static <K, V> int incrementalCacheCleanup(Map<K, V> cache, int maxToRemove, long cutoffTick) {
+        int removed = 0;
+        Iterator<Map.Entry<K, V>> iterator = cache.entrySet().iterator();
+        
+        while (iterator.hasNext() && removed < maxToRemove) {
+            Map.Entry<K, V> entry = iterator.next();
+            if (entry.getValue() instanceof StableFlowEntry) {
+                StableFlowEntry flowEntry = (StableFlowEntry) entry.getValue();
+                if (flowEntry.lastUpdateTick < cutoffTick) {
+                    iterator.remove();
+                    removed++;
+                }
+            } else if (entry.getValue() instanceof EdgeFluidEntry) {
+                EdgeFluidEntry edgeEntry = (EdgeFluidEntry) entry.getValue();
+                if (edgeEntry.lastCheckTick < cutoffTick) {
+                    iterator.remove();
+                    removed++;
+                }
+            } else if (entry.getValue() instanceof HeavyFlowZone) {
+                HeavyFlowZone zone = (HeavyFlowZone) entry.getValue();
+                if (zone.lastUpdateTick < cutoffTick) {
+                    iterator.remove();
+                    removed++;
+                }
+            }
         }
         
-        // Clean heavy flow zones - enforce hard limit of 500
-        heavyFlowZones.entrySet().removeIf(e -> e.getValue().lastUpdateTick < cutoffTick);
-        if (heavyFlowZones.size() > 500) {
-            heavyFlowZones.clear();
-            LOGGER.warn("Cleared heavyFlowZones due to size limit exceeded");
+        return removed;
+    }
+    
+    /**
+     * Incrementally clean a map with time-based cutoff
+     */
+    private static <K, V> int incrementalMapCleanup(Map<K, V> map, int maxToRemove, long cutoffValue) {
+        int removed = 0;
+        Iterator<Map.Entry<K, V>> iterator = map.entrySet().iterator();
+        
+        while (iterator.hasNext() && removed < maxToRemove) {
+            Map.Entry<K, V> entry = iterator.next();
+            if (entry.getValue() instanceof Long) {
+                Long timeValue = (Long) entry.getValue();
+                if (timeValue < cutoffValue) {
+                    iterator.remove();
+                    removed++;
+                }
+            }
         }
         
-        // Clean recently scheduled - enforce hard limit of 5000
-        long timeCutoff = System.currentTimeMillis() - 1000; // 1 second instead of 2
-        recentlyScheduled.entrySet().removeIf(e -> e.getValue() < timeCutoff);
-        if (recentlyScheduled.size() > 5000) {
-            recentlyScheduled.clear();
-        }
-        
-        // Clean fluid change origins - enforce hard limit of 5000
-        fluidChangeOrigins.entrySet().removeIf(e -> recentlyScheduled.getOrDefault(e.getKey(), 0L) < timeCutoff);
-        if (fluidChangeOrigins.size() > 5000) {
-            fluidChangeOrigins.clear();
-        }
-        
-        // Clean stable source block cache
-        stableSourceBlockCache.entrySet().removeIf(e -> currentServerTick - e.getValue() > 50);
-        if (stableSourceBlockCache.size() > STABLE_SOURCE_CACHE_MAX_SIZE) {
-            stableSourceBlockCache.clear();
-        }
-        
-        // Clean deferred queue if too large
-        if (deferredQueue.size() > 1000) {
-            deferredQueue.clear();
-            LOGGER.warn("Cleared deferredQueue due to size limit exceeded");
-        }
-        
-        LOGGER.debug("Cache cleanup: stableFlow={}, edgeFluid={}, heavyZones={}, deferred={}",
-            stableFlowCache.size(), edgeFluidCache.size(), heavyFlowZones.size(), deferredQueue.size());
+        return removed;
     }
     
     /**

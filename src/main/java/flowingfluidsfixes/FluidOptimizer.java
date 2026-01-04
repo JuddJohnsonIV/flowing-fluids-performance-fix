@@ -207,21 +207,72 @@ public class FluidOptimizer {
         LOGGER.debug("Applied fluid update at {} in level {}", blockPos, serverWorld.dimension().location().toString());
     }
 
+    // SMOOTH THROTTLING WITH HYSTERESIS - Prevent rapid mode switching
+    private static double currentThrottlingFactor = 1.0;
+    private static double targetThrottlingFactor = 1.0;
+    private static final double THROTTLING_SMOOTHING_FACTOR = 0.1; // 10% smoothing per tick
+    private static final double HYSTERESIS_THRESHOLD = 0.15; // 15% hysteresis band
+    private static final double MIN_THROTTLE = 0.1; // Minimum 10% of updates
+    private static final double MAX_THROTTLE = 2.0; // Maximum 200% of updates
+    
     private int calculateDynamicUpdateCount(double ticksPerSecond) {
-        int baseUpdates = 50; // Dramatically reduced to prevent server overload
-        if (ticksPerSecond < 10.0) {
-            return baseUpdates / 4; // Very aggressive reduction under load
-        } else if (ticksPerSecond < 15.0) {
-            return (int)(baseUpdates * 0.6); // Conservative processing
-        } else if (ticksPerSecond < 18.0) {
-            return (int)(baseUpdates * 0.8); // Still conservative
+        // Calculate target throttling based on TPS with hysteresis
+        double newTargetFactor = calculateTargetThrottlingFactor(ticksPerSecond);
+        
+        // Apply hysteresis - only change if difference exceeds threshold
+        if (Math.abs(newTargetFactor - targetThrottlingFactor) > HYSTERESIS_THRESHOLD) {
+            targetThrottlingFactor = newTargetFactor;
         }
-        return baseUpdates; // Maximum safe limit
+        
+        // Smooth transition toward target
+        double factorDiff = targetThrottlingFactor - currentThrottlingFactor;
+        currentThrottlingFactor += factorDiff * THROTTLING_SMOOTHING_FACTOR;
+        
+        // Clamp to reasonable bounds
+        currentThrottlingFactor = Math.max(MIN_THROTTLE, Math.min(MAX_THROTTLE, currentThrottlingFactor));
+        
+        // Calculate updates with smooth throttling
+        int baseUpdates = 400; // Increased base for smoother performance
+        int smoothedUpdates = (int) (baseUpdates * currentThrottlingFactor);
+        
+        // Ensure minimum updates even under heavy load
+        return Math.max(50, smoothedUpdates);
+    }
+    
+    /**
+     * Calculate target throttling factor based on TPS
+     */
+    private double calculateTargetThrottlingFactor(double tps) {
+        if (tps < 8.0) {
+            return 0.25; // 25% of updates under heavy load
+        } else if (tps < 12.0) {
+            return 0.5;  // 50% of updates under moderate load
+        } else if (tps < 16.0) {
+            return 0.75; // 75% of updates under light load
+        } else if (tps < 18.0) {
+            return 1.0;  // 100% of updates near optimal
+        } else {
+            return 1.5;  // 150% of updates when server is healthy
+        }
     }
 
     public int calculateDynamicUpdateLimit(double tpsValue) {
-        int limit = (int) (BASE_UPDATES_PER_TICK * (tpsValue / 20.0));
-        return Math.max(MIN_UPDATES_PER_TICK, Math.min(MAX_STANDARD_UPDATES + MAX_HIGH_PRIORITY_UPDATES, limit));
+        // Use smooth throttling instead of sudden changes
+        double smoothFactor = currentThrottlingFactor;
+        
+        // Apply smooth factor to base limit
+        int smoothLimit = (int) (BASE_UPDATES_PER_TICK * smoothFactor);
+        
+        // Ensure reasonable bounds
+        return Math.max(MIN_UPDATES_PER_TICK, Math.min(MAX_STANDARD_UPDATES + MAX_HIGH_PRIORITY_UPDATES, smoothLimit));
+    }
+    
+    /**
+     * Get current throttling statistics for monitoring
+     */
+    public String getThrottlingStats() {
+        return String.format("Throttling: Current=%.2f, Target=%.2f, BaseUpdates=%d",
+            currentThrottlingFactor, targetThrottlingFactor, BASE_UPDATES_PER_TICK);
     }
 
     private void cleanupFlowCache(ServerLevel worldLevel) {

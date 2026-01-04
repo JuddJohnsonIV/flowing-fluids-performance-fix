@@ -24,7 +24,7 @@ public class FluidBlockMixin {
         // Only record metrics - DO NOT cancel or interfere with Flowing Fluids
         FluidState fluidState = state.getFluidState();
         if (!fluidState.isEmpty()) {
-            flowingfluidsfixes.PerformanceMonitor.recordFluidUpdate();
+            flowingfluidsfixes.PerformanceMonitor.incrementFluidUpdateCount();
         }
         // Let Flowing Fluids handle the actual fluid logic
         // Reference parameters to avoid 'never read' warnings

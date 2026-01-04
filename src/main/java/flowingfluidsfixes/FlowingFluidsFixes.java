@@ -109,7 +109,7 @@ public class FlowingFluidsFixes {
         // Server performance
         report.append("\nServer Performance:\n");
         report.append("  TPS: ").append(String.format("%.2f", PerformanceMonitor.getAverageTPS())).append("\n");
-        report.append("  Average Fluid Updates: ").append(PerformanceMonitor.getAverageFluidUpdates()).append("\n");
+        report.append("  Current Fluid Updates: ").append(PerformanceMonitor.getFluidUpdateCount()).append("\n");
         report.append("  Server Overloaded: ").append(PerformanceMonitor.isServerOverloaded()).append("\n");
         
         report.append("================================================\n");

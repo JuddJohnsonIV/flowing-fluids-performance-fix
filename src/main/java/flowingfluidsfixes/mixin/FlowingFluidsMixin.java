@@ -30,7 +30,7 @@ public abstract class FlowingFluidsMixin {
     private void onTick(Level level, BlockPos pos, BlockState state, FluidState fluidState, CallbackInfo ci) {
         // Only record metrics - DO NOT cancel or interfere with Flowing Fluids
         if (!fluidState.isEmpty() && !level.isClientSide()) {
-            flowingfluidsfixes.PerformanceMonitor.recordFluidUpdate();
+            flowingfluidsfixes.PerformanceMonitor.incrementFluidUpdateCount();
         }
         // Let Flowing Fluids handle the actual fluid logic
     }

@@ -216,7 +216,7 @@ public class FlowingFluidsPerformanceMonitor {
         if (duration > 0) {
             PerformanceMetrics metrics = optimizationMetrics.computeIfAbsent(level, k -> new PerformanceMetrics());
             metrics.addSample(duration, PerformanceMonitor.getAverageTPS(), 
-                             PerformanceMonitor.getAverageFluidUpdates());
+                             PerformanceMonitor.getFluidUpdateCount());
         }
     }
     
@@ -256,7 +256,7 @@ public class FlowingFluidsPerformanceMonitor {
         LOGGER.info("Optimization Rate: {:.2f}%", optimizationRate);
         LOGGER.info("Deferral Rate: {:.2f}%", deferralRate);
         LOGGER.info("Current TPS: {:.2f}", PerformanceMonitor.getAverageTPS());
-        LOGGER.info("Average Fluid Updates: {}", PerformanceMonitor.getAverageFluidUpdates());
+        LOGGER.info("Current Fluid Updates: {}", PerformanceMonitor.getFluidUpdateCount());
         
         // Show optimization impact
         if (!tpsBeforeOptimization.isEmpty() && !tpsAfterOptimization.isEmpty()) {
@@ -291,7 +291,7 @@ public class FlowingFluidsPerformanceMonitor {
         
         // Current performance
         report.put("currentTPS", PerformanceMonitor.getAverageTPS());
-        report.put("currentFluidUpdates", PerformanceMonitor.getAverageFluidUpdates());
+        report.put("currentFluidUpdates", PerformanceMonitor.getFluidUpdateCount());
         report.put("currentOptimizationLevel", currentOptimizationLevel.name());
         
         // Optimization level metrics

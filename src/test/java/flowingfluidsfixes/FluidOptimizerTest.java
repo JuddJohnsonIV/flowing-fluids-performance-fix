@@ -20,8 +20,8 @@ public class FluidOptimizerTest {
     @Test
     void testBaseUpdatesPerTickValue() {
         // Verify the expected value of BASE_UPDATES_PER_TICK (reduced for performance)
-        assertEquals(300, FluidOptimizer.BASE_UPDATES_PER_TICK, 
-            "BASE_UPDATES_PER_TICK should be 300 (optimized for performance)");
+        assertEquals(1000, FluidOptimizer.BASE_UPDATES_PER_TICK, 
+            "BASE_UPDATES_PER_TICK should be 1000 (optimized for performance)");
     }
 
     @Test
