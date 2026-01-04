@@ -81,6 +81,9 @@ public class FluidEventHandler {
         // This ensures flowing fluids in ocean areas get replenished quickly
         OceanRiverWaterReplenishment.processReplenishments(overworld);
         
+        // ANTI-GRADIENT: Actively break up long gradients to prevent rings
+        OceanRiverWaterReplenishment.breakUpLongGradients(overworld);
+        
         // OPTIMIZED: Process shore water leveling every 4 ticks to reduce FPS impact
         // Water flowing into ocean/river should merge with ocean water level
         if (server.getTickCount() % 4 == 0) {

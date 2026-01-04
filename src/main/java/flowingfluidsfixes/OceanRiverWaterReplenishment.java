@@ -63,6 +63,96 @@ public class OceanRiverWaterReplenishment {
     private static final int OCEAN_SURFACE_FILLING_RADIUS = 32; // Further reduced from 48 for massive ocean areas
     
     /**
+     * Actively seek out and break up existing long gradients
+     * This prevents those long rings from forming in the first place
+     */
+    public static void breakUpLongGradients(ServerLevel level) {
+        if (!enabled) return;
+        
+        int broken = 0;
+        int maxBreakupsPerTick = 500; // Limit to prevent performance issues
+        
+        // Scan for gradient patterns in ocean/river biomes
+        for (int i = 0; i < maxBreakupsPerTick; i++) {
+            // Random sampling to find gradients
+            int x = level.random.nextInt(200) - 100; // -100 to 100
+            int z = level.random.nextInt(200) - 100; // -100 to 100
+            BlockPos pos = new BlockPos(
+                level.getSharedSpawnPos().getX() + x,
+                SEA_LEVEL,
+                level.getSharedSpawnPos().getZ() + z
+            );
+            
+            if (level.isLoaded(pos) && BiomeOptimization.isOceanOrRiverBiome(level, pos)) {
+                FluidState fluid = level.getFluidState(pos);
+                if (fluid.is(Fluids.FLOWING_WATER) && !fluid.isSource()) {
+                    if (isCreatingLongGradient(level, pos)) {
+                        // Break it up aggressively
+                        level.setBlock(pos, Blocks.WATER.defaultBlockState(), 3);
+                        createGradientDisruption(level, pos);
+                        broken++;
+                    }
+                }
+            }
+        }
+        
+        if (broken > 0) {
+            LOGGER.debug("Broke up {} long gradient patterns", broken);
+        }
+    }
+    
+    /**
+     * Check if this position is creating a long gradient pattern
+     * This identifies areas that would create those long rings of different heights
+     */
+    private static boolean isCreatingLongGradient(ServerLevel level, BlockPos pos) {
+        int currentLevel = level.getFluidState(pos).getAmount();
+        int gradientCount = 0;
+        
+        // Check all horizontal neighbors for gradient patterns
+        for (Direction dir : Direction.Plane.HORIZONTAL) {
+            BlockPos neighborPos = pos.relative(dir);
+            if (level.isLoaded(neighborPos)) {
+                FluidState neighborFluid = level.getFluidState(neighborPos);
+                if (neighborFluid.is(Fluids.FLOWING_WATER)) {
+                    int neighborLevel = neighborFluid.getAmount();
+                    // If neighbor has a slightly different level, this contributes to gradient
+                    if (Math.abs(neighborLevel - currentLevel) == 1) {
+                        gradientCount++;
+                    }
+                }
+            }
+        }
+        
+        // Consider it a long gradient if we have 3+ neighbors with gradual differences
+        return gradientCount >= 3;
+    }
+    
+    /**
+     * Create gradient disruption by placing random source blocks
+     * This breaks up the smooth gradient pattern
+     */
+    private static void createGradientDisruption(ServerLevel level, BlockPos centerPos) {
+        // Create disruption pattern around this position
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dz = -2; dz <= 2; dz++) {
+                if (Math.abs(dx) + Math.abs(dz) <= 3) { // Diamond pattern
+                    BlockPos disruptPos = centerPos.offset(dx, 0, dz);
+                    if (level.isLoaded(disruptPos)) {
+                        FluidState fluid = level.getFluidState(disruptPos);
+                        if (fluid.is(Fluids.FLOWING_WATER) && !fluid.isSource()) {
+                            // 50% chance to place full source block for disruption
+                            if (level.random.nextFloat() < 0.5f) {
+                                level.setBlock(disruptPos, Blocks.WATER.defaultBlockState(), 3);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
      * Check if a position is eligible for water replenishment.
      * ONLY returns true for ocean and river biomes.
      */
@@ -299,10 +389,17 @@ public class OceanRiverWaterReplenishment {
             return true;
         }
         
-        // FAST FILLING: Fill 16 levels at a time for much faster replenishment
-        // This makes replenishment much faster than original 6 levels but still gradual
+        // ANTI-GRADIENT: Instant filling with gradient disruption
         if (currentFluid.is(Fluids.FLOWING_WATER)) {
             if (isOcean) {
+                // Check if we're creating a gradient and disrupt it
+                if (isCreatingLongGradient(level, pos)) {
+                    // DISRUPT: Place full source block to break gradient
+                    level.setBlock(pos, Blocks.WATER.defaultBlockState(), 3);
+                    createGradientDisruption(level, pos);
+                    return true;
+                }
+                
                 // OCEAN: INSTANT filling (255 levels at a time - for extreme flowing fluid replenishment)
                 int currentAmount = currentFluid.getAmount();
                 int newAmount = Math.min(currentAmount + 255, 8); // Instant filling for extreme cases
@@ -314,6 +411,14 @@ public class OceanRiverWaterReplenishment {
                 }
                 return true;
             } else {
+                // Check if we're creating a gradient and disrupt it
+                if (isCreatingLongGradient(level, pos)) {
+                    // DISRUPT: Place full source block to break gradient
+                    level.setBlock(pos, Blocks.WATER.defaultBlockState(), 3);
+                    createGradientDisruption(level, pos);
+                    return true;
+                }
+                
                 // RIVER: EXTREME filling (128 levels at a time - for extreme depletion cases)
                 int currentAmount = currentFluid.getAmount();
                 int newAmount = Math.min(currentAmount + 128, 8);
@@ -358,6 +463,14 @@ public class OceanRiverWaterReplenishment {
         
         // ULTRA-FAST FILLING: INSTANT filling (255 levels at a time) for flow boundaries (for extreme flowing fluid replenishment)
         if (currentFluid.is(Fluids.FLOWING_WATER)) {
+            // Check if we're creating a gradient and disrupt it
+            if (isCreatingLongGradient(level, pos)) {
+                // DISRUPT: Place full source block to break gradient
+                level.setBlock(pos, Blocks.WATER.defaultBlockState(), 3);
+                createGradientDisruption(level, pos);
+                return true;
+            }
+            
             int currentAmount = currentFluid.getAmount();
             int newAmount = Math.min(currentAmount + 255, 8); // Instant filling for extreme cases
             
