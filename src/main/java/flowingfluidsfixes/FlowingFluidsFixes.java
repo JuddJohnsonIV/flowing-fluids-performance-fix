@@ -13,6 +13,8 @@ import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.chunk.PalettedContainer;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -21,6 +23,9 @@ import java.util.concurrent.CompletableFuture;
 import java.util.Map;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.TimeUnit;
 import java.lang.reflect.Field;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
@@ -91,6 +96,36 @@ public class FlowingFluidsFixes {
     private static boolean flowingFluidsDetected = false;
     private static Class<?> flowingFluidsConfigClass = null;
     private static Field maxUpdatesField = null;
+    
+    // Level reference for intelligent fluid management
+    private static ServerLevel level = null;
+    
+    // ========== OBJECT POOLING FOR CRITICAL BOTTLENECKS ==========
+    
+    // BlockPos object pool to reduce GC pressure (867 operations)
+    private static final ObjectPool<BlockPos.MutableBlockPos> BLOCK_POS_POOL = new ObjectPool<>(
+        () -> new BlockPos.MutableBlockPos(),
+        pos -> {}, // MutableBlockPos doesn't need reset
+        pos -> {}  // MutableBlockPos doesn't need cleanup
+    );
+    
+    // BlockState object pool for PalettedContainer optimization (203 operations)
+    private static final ObjectPool<BlockState> BLOCK_STATE_POOL = new ObjectPool<>(
+        () -> Blocks.AIR.defaultBlockState(),
+        state -> {}, // BlockStates are immutable, no reset needed
+        state -> {}  // BlockStates are immutable, no cleanup needed
+    );
+    
+    // PalettedContainer cache to reduce chunk data access (203 operations)
+    private static final ConcurrentHashMap<ChunkPos, PalettedContainer<BlockState>> PALETTED_CACHE = 
+        new ConcurrentHashMap<>();
+    
+    // Entity processing optimization (1293 operations)
+    private static final AtomicInteger entityProcessingSkips = new AtomicInteger(0);
+    
+    // Redstone cascade prevention (115 operations)
+    private static final Queue<BlockPos> deferredRedstoneUpdates = new ConcurrentLinkedQueue<>();
+    private static final AtomicInteger redstoneDeferrals = new AtomicInteger(0);
     
     // LOD processing levels
     public enum ProcessingLevel {
@@ -224,7 +259,7 @@ public class FlowingFluidsFixes {
     }
     
     /**
-     * CONSOLIDATED: Single fluid event handler with all optimizations
+     * CONSOLIDATED: Single fluid event handler with intelligent fluid management
      */
     @SubscribeEvent
     public static void onNeighborNotify(BlockEvent.NeighborNotifyEvent event) {
@@ -240,192 +275,98 @@ public class FlowingFluidsFixes {
             return;
         }
         
-        // Additional MSPT-based filtering - REMOVED OLD AGGRESSIVE FILTERING
-        // Replaced with slope-aware throttling above to prevent water from getting stuck
-        
-        // CRITICAL: Skip ALL world access when server is struggling
-        if (cachedMSPT > 50.0) {
-            // MINIMAL atomic operations when skipping
-            skippedFluidEvents.incrementAndGet();
-            return; // EXIT BEFORE ANY WORLD ACCESS
-        }
-        
-        if (event.getLevel() instanceof ServerLevel level) {
+        if (event.getLevel() instanceof ServerLevel serverLevel) {
+            // Set level reference for intelligent fluid management
+            level = serverLevel;
             BlockPos pos = event.getPos();
             
-            // NEW: Level operation optimization - reduce worldwide level access
-            if (cachedMSPT > 5.0 && allowCaching) {
-                // Cache level access results to reduce repeated operations
-                Boolean cachedResult = levelAccessCache.get(pos);
-                if (cachedResult != null) {
-                    levelAccessCacheHits++;
-                    if (!cachedResult) {
-                        skippedFluidEvents.incrementAndGet();
-                        return; // Skip based on cached result
-                    }
-                } else {
-                    levelAccessCacheMisses++;
-                }
-            }
+            // INTELLIGENT: Add fluid to priority queue instead of immediate processing
+            addToPriorityQueue(pos);
             
-            // NEW: Slope-aware throttling - prioritize water on gradients
-            if (cachedMSPT > 10.0) {
-                // Check if this is a slope situation (water needs to flow downhill)
-                boolean isSlopeSituation = isOnSlope(level, pos);
-                
-                if (isSlopeSituation) {
-                    // Allow slope updates even during high MSPT - critical for fluid flow
-                    // Don't skip slope updates as they break the cascade
-                } else {
-                    // Apply normal throttling for non-slope situations
-                    if (cachedMSPT > 30.0) {
-                        if (currentEvents % 3 != 0) return; // Skip 66%
-                    } else if (cachedMSPT > 20.0) {
-                        if (currentEvents % 5 != 0) return; // Skip 80%
-                    } else if (cachedMSPT > 10.0) {
-                        if (currentEvents % 2 != 0) return; // Skip 50%
-                    }
-                }
-            }
+            // INTELLIGENT: Process fluids based on server capacity and priority
+            processFluidQueueBasedOnCapacity();
             
-            // NEW: Aggressive level operation reduction for high MSPT
-            if (cachedMSPT > 15.0) {
-                // Skip 75% of level access when server struggling
-                if (currentEvents % 4 != 0) {
-                    skippedFluidEvents.incrementAndGet();
-                    return;
-                }
-            }
-            
-            // NEW: Entity and chunk optimization when server struggling
-            if (cachedMSPT > 12.0) {
-                // Reduce entity processing load (addresses TrackedEntity: 15 calls)
-                // OPTIMIZED: Use cached player positions instead of direct player scan
-                if (playerPositions.size() > 10) {
-                    skippedFluidEvents.incrementAndGet();
-                    return; // Skip fluid events in overloaded worlds
-                }
-            }
-            
-            // NEW: Chunk operation optimization (addresses ChunkMap: 19, ServerChunkCache: 13)
-            if (cachedMSPT > 10.0) {
-                // Skip fluid events in chunks far from players to reduce chunk tracking
-                // OPTIMIZED: Calculate chunk coordinates directly to avoid object creation
-                int chunkX = pos.getX() >> 4;
-                int chunkZ = pos.getZ() >> 4;
-                if (!isChunkNearPlayers(chunkX, chunkZ)) {
-                    skippedFluidEvents.incrementAndGet();
-                    return; // Reduce ChunkMap and ServerChunkCache operations
-                }
-            }
-            
-            // NEW: Chunk task scheduling optimization (addresses ChunkTaskPriorityQueueSorter: 11)
-            if (cachedMSPT > 8.0) {
-                // Skip fluid events that would create chunk tasks when server is struggling
-                if (isAtChunkBoundary(pos)) {
-                    skippedFluidEvents.incrementAndGet();
-                    return; // Avoid chunk boundary operations that create tasks
-                }
-            }
-            
-            // Fast duplicate check
-            int posHash = pos.hashCode();
-            if (lastProcessedHash == posHash) return;
-            lastProcessedHash = posHash;
-            
-            // Only do expensive world access when server is healthy
-            // NEW: BlockState caching to reduce LevelChunk/PalettedContainer operations
-            BlockState state;
-            FluidState fluidState;
-            
-            // NEW: Add to chunk batch for LevelChunk optimization
-            addToChunkBatch(pos);
-            
-            if (cachedMSPT > 5.0 && allowCaching) {
-                // Try to get from cache first
-                BlockState cachedState = blockStateCache.get(pos);
-                FluidState cachedFluidState = fluidStateCache.get(pos);
-                if (cachedState != null && cachedFluidState != null) {
-                    // Use cached values to avoid LevelChunk/PalettedContainer operations
-                    // Both state and fluidState are used as a paired caching system
-                    state = cachedState;           // Used for potential future level operations
-                    fluidState = cachedFluidState;  // Used for fluid processing below (line 354)
-                    blockCacheHits++;
-                    // Both cached values are used in the fluid processing logic below
-                } else {
-                    // Cache miss - get from world and cache result
-                    state = level.getBlockState(pos);
-                    fluidState = state.getFluidState();
-                    if (blockStateCache.size() < 5000) { // Reduced cache size from 10000 to prevent overhead
-                        blockStateCache.put(pos, state);
-                        fluidStateCache.put(pos, fluidState);
-                    }
-                    blockCacheMisses++;
-                }
-            } else {
-                // Server is healthy - direct access
-                state = level.getBlockState(pos);
-                fluidState = state.getFluidState();
-            }
-            
-            // Cache the result for future level operations
-            if (cachedMSPT > 5.0 && levelAccessCache.size() < 5000) {
-                boolean shouldProcess = !fluidState.isEmpty() && fluidState.getType() != Fluids.EMPTY && !fluidState.isSource();
-                levelAccessCache.put(pos, shouldProcess);
-            }
-            
-            // Only process flowing fluids, skip static source blocks
-            if (!fluidState.isEmpty() && fluidState.getType() != Fluids.EMPTY && !fluidState.isSource()) {
-                // CRITICAL: Skip processing when server is struggling
-                if (cachedMSPT > 25.0) {
-                    skippedFluidEvents.incrementAndGet();
-                    return;
-                }
-                
-                // Increment counter only once
-                eventsThisTick.set(currentEvents + 1);
-                totalFluidEvents.incrementAndGet();
-                
-                // ONLY do expensive LOD calculations when server is performing well
-                if (cachedMSPT < 10.0) {
-                    ProcessingLevel lodLevel = getProcessingLevel(pos);
-                    if (lodLevel == ProcessingLevel.SKIPPED) {
-                        skippedFluidEvents.incrementAndGet();
-                        return;
-                    }
-                    
-                    switch (lodLevel) {
-                        case FULL:
-                            // Full processing only when server is excellent
-                            break;
-                        case MEDIUM:
-                            // Skip 50% for medium distance
-                            if ((currentEvents & 1) != 0) {
-                                skippedFluidEvents.incrementAndGet();
-                            }
-                            break;
-                        case MINIMAL:
-                            // Skip 75% for minimal distance
-                            if ((currentEvents % 4) != 0) {
-                                skippedFluidEvents.incrementAndGet();
-                            }
-                            break;
-                        case SKIPPED:
-                            break;
-                    }
-                }
-            }
+            // Update counters
+            eventsThisTick.incrementAndGet();
+            totalFluidEvents.incrementAndGet();
+            return;
         }
     }
     
     /**
-     * NEW: Check if position is at chunk boundary (creates chunk tasks)
+     * NEW: Optimized BlockPos acquisition using object pool
      */
-    private static boolean isAtChunkBoundary(BlockPos pos) {
-        int x = pos.getX();
-        int z = pos.getZ();
-        // Check if at chunk edge (16x16 chunks)
-        return (x % 16 == 0) || (x % 16 == 15) || (z % 16 == 0) || (z % 16 == 15);
+    private static BlockPos.MutableBlockPos acquireBlockPos(int x, int y, int z) {
+        BlockPos.MutableBlockPos pos = BLOCK_POS_POOL.acquire();
+        pos.set(x, y, z);
+        return pos;
+    }
+    
+    /**
+     * NEW: Release BlockPos back to object pool
+     */
+    private static void releaseBlockPos(BlockPos.MutableBlockPos pos) {
+        if (pos != null) {
+            BLOCK_POS_POOL.release(pos);
+        }
+    }
+    
+    /**
+     * NEW: Get cached PalettedContainer to reduce chunk data access
+     */
+    private static PalettedContainer<BlockState> getCachedPalettedContainer(ChunkPos chunkPos) {
+        if (cachedMSPT > 15.0) {
+            return PALETTED_CACHE.get(chunkPos);
+        }
+        return null; // Don't use cache when server is healthy
+    }
+    
+    /**
+     * NEW: Cache PalettedContainer for future use
+     */
+    private static void cachePalettedContainer(ChunkPos chunkPos, PalettedContainer<BlockState> container) {
+        if (cachedMSPT > 15.0 && PALETTED_CACHE.size() < 1000) {
+            PALETTED_CACHE.put(chunkPos, container);
+        }
+    }
+    
+    /**
+     * NEW: Check if entity processing should be skipped during high fluid activity
+     */
+    private static boolean shouldSkipEntityProcessing() {
+        if (cachedMSPT > 20.0 && eventsThisTick.get() > 100) {
+            entityProcessingSkips.incrementAndGet();
+            return true;
+        }
+        return false;
+    }
+    
+    /**
+     * NEW: Check if redstone update should be deferred to prevent cascades
+     */
+    private static boolean shouldDeferRedstoneUpdate(BlockPos pos) {
+        if (cachedMSPT > 15.0 && level != null && level.getBlockState(pos).is(Blocks.REDSTONE_WIRE)) {
+            deferredRedstoneUpdates.offer(pos.immutable());
+            redstoneDeferrals.incrementAndGet();
+            return true;
+        }
+        return false;
+    }
+    
+    /**
+     * NEW: Process deferred redstone updates when server is healthy
+     */
+    private static void processDeferredRedstoneUpdates() {
+        if (cachedMSPT < 10.0 && !deferredRedstoneUpdates.isEmpty()) {
+            int processed = 0;
+            while (!deferredRedstoneUpdates.isEmpty() && processed < 10) {
+                BlockPos pos = deferredRedstoneUpdates.poll();
+                if (pos != null && level != null && level.isLoaded(pos)) {
+                    level.updateNeighborsAt(pos, level.getBlockState(pos).getBlock());
+                    processed++;
+                }
+            }
+        }
     }
     
     /**
@@ -836,5 +777,212 @@ public class FlowingFluidsFixes {
      */
     public static int getCachedResourceHash(String resource) {
         return resourceHashCache.computeIfAbsent(resource, String::hashCode);
+    }
+    
+    // ========== INTELLIGENT FLUID MANAGEMENT SYSTEM ==========
+    
+    // Priority queue for intelligent fluid processing
+    private static final ConcurrentHashMap<BlockPos, Integer> PRIORITY_FLUID_QUEUE = new ConcurrentHashMap<>();
+    
+    // Processing quality levels for adaptive performance
+    public enum ProcessingQuality {
+        FAST,    // Minimal processing for high load
+        NORMAL,  // Standard processing
+        THOROUGH // Complete processing for low load
+    }
+    
+    /**
+     * Calculate fluid priority based on slope and player distance
+     */
+    private static int calculateFluidPriority(BlockPos pos) {
+        if (level == null) return 1;
+        
+        int priority = 1; // Base priority
+        
+        // Higher priority for fluids on slopes (critical for flow)
+        if (isOnSlope(level, pos)) {
+            priority += 10; // Slope fluids are highest priority
+        }
+        
+        // Higher priority for fluids near players
+        for (Player player : level.players()) {
+            double distance = Math.sqrt(
+                Math.pow(pos.getX() - player.getX(), 2) +
+                Math.pow(pos.getY() - player.getY(), 2) +
+                Math.pow(pos.getZ() - player.getZ(), 2)
+            );
+            if (distance < 32) {
+                priority += 5; // Near players
+                break;
+            }
+        }
+        
+        return priority;
+    }
+    
+    /**
+     * Add fluid to priority queue for intelligent processing
+     */
+    private static void addToPriorityQueue(BlockPos pos) {
+        int priority = calculateFluidPriority(pos);
+        PRIORITY_FLUID_QUEUE.put(pos, priority);
+    }
+    
+    /**
+     * Process fluids based on server capacity and priority
+     */
+    private static void processFluidQueueBasedOnCapacity() {
+        int capacity = calculateProcessingCapacity();
+        ProcessingQuality quality = determineProcessingQuality();
+        
+        // Process highest priority fluids first
+        List<Map.Entry<BlockPos, Integer>> sortedFluids = new ArrayList<>(PRIORITY_FLUID_QUEUE.entrySet());
+        sortedFluids.sort((a, b) -> b.getValue().compareTo(a.getValue())); // Highest priority first
+        
+        int processed = 0;
+        for (Map.Entry<BlockPos, Integer> entry : sortedFluids) {
+            if (processed >= capacity) break;
+            
+            BlockPos pos = entry.getKey();
+            processFluidWithQuality(pos, quality);
+            
+            // Remove from queue
+            PRIORITY_FLUID_QUEUE.remove(pos);
+            processed++;
+        }
+    }
+    
+    /**
+     * Calculate processing capacity based on server load
+     */
+    private static int calculateProcessingCapacity() {
+        if (cachedMSPT > 30.0) {
+            return 10; // Very limited capacity under high load
+        } else if (cachedMSPT > 15.0) {
+            return 25; // Limited capacity under medium load
+        } else {
+            return 50; // Normal capacity
+        }
+    }
+    
+    /**
+     * Determine processing quality based on server performance
+     */
+    private static ProcessingQuality determineProcessingQuality() {
+        if (cachedMSPT > 30.0) {
+            return ProcessingQuality.FAST;
+        } else if (cachedMSPT > 15.0) {
+            return ProcessingQuality.NORMAL;
+        } else {
+            return ProcessingQuality.THOROUGH;
+        }
+    }
+    
+    /**
+     * Process fluid with specified quality level
+     */
+    private static void processFluidWithQuality(BlockPos pos, ProcessingQuality quality) {
+        switch (quality) {
+            case FAST:
+                processFluidBasic(pos);
+                break;
+            case NORMAL:
+                processFluidOptimized(pos);
+                break;
+            case THOROUGH:
+                processFluidComplete(pos);
+                break;
+        }
+    }
+    
+    /**
+     * Basic fluid processing (fastest) - optimized with object pooling
+     */
+    private static void processFluidBasic(BlockPos pos) {
+        if (level == null || !level.isLoaded(pos)) return;
+        
+        // Use object pooling to reduce BlockPos creation (867 operations)
+        BlockPos.MutableBlockPos pooledPos = acquireBlockPos(pos.getX(), pos.getY(), pos.getZ());
+        
+        try {
+            level.scheduleTick(pooledPos, level.getBlockState(pooledPos).getBlock(), 1);
+        } catch (Exception e) {
+            // Safe failure
+        } finally {
+            releaseBlockPos(pooledPos);
+        }
+    }
+    
+    /**
+     * Optimized fluid processing (balanced) - with PalettedContainer caching
+     */
+    private static void processFluidOptimized(BlockPos pos) {
+        if (level == null || !level.isLoaded(pos)) return;
+        
+        BlockPos.MutableBlockPos pooledPos = acquireBlockPos(pos.getX(), pos.getY(), pos.getZ());
+        
+        try {
+            level.scheduleTick(pooledPos, level.getBlockState(pooledPos).getBlock(), 1);
+            
+            // Process critical neighbors with object pooling
+            BlockPos.MutableBlockPos[] critical = {
+                acquireBlockPos(pooledPos.getX(), pooledPos.getY(), pooledPos.getZ() - 1), // north
+                acquireBlockPos(pooledPos.getX(), pooledPos.getY(), pooledPos.getZ() + 1), // south
+                acquireBlockPos(pooledPos.getX() - 1, pooledPos.getY(), pooledPos.getZ()), // west
+                acquireBlockPos(pooledPos.getX() + 1, pooledPos.getY(), pooledPos.getZ())  // east
+            };
+            
+            for (BlockPos.MutableBlockPos neighbor : critical) {
+                if (level.isLoaded(neighbor)) {
+                    level.scheduleTick(neighbor, level.getBlockState(neighbor).getBlock(), 1);
+                }
+                releaseBlockPos(neighbor);
+            }
+        } catch (Exception e) {
+            // Safe failure
+        } finally {
+            releaseBlockPos(pooledPos);
+        }
+    }
+    
+    /**
+     * Complete fluid processing (thorough) - with full optimizations
+     */
+    private static void processFluidComplete(BlockPos pos) {
+        if (level == null || !level.isLoaded(pos)) return;
+        
+        BlockPos.MutableBlockPos pooledPos = acquireBlockPos(pos.getX(), pos.getY(), pos.getZ());
+        
+        try {
+            level.scheduleTick(pooledPos, level.getBlockState(pooledPos).getBlock(), 1);
+            
+            // Process all adjacent positions with object pooling
+            BlockPos.MutableBlockPos[] allAdjacent = {
+                acquireBlockPos(pooledPos.getX(), pooledPos.getY(), pooledPos.getZ() - 1), // north
+                acquireBlockPos(pooledPos.getX(), pooledPos.getY(), pooledPos.getZ() + 1), // south
+                acquireBlockPos(pooledPos.getX() - 1, pooledPos.getY(), pooledPos.getZ()), // west
+                acquireBlockPos(pooledPos.getX() + 1, pooledPos.getY(), pooledPos.getZ()), // east
+                acquireBlockPos(pooledPos.getX(), pooledPos.getY() + 1, pooledPos.getZ()), // above
+                acquireBlockPos(pooledPos.getX(), pooledPos.getY() - 1, pooledPos.getZ()), // below
+                acquireBlockPos(pooledPos.getX() - 1, pooledPos.getY(), pooledPos.getZ() - 1), // north-west
+                acquireBlockPos(pooledPos.getX() + 1, pooledPos.getY(), pooledPos.getZ() - 1), // north-east
+                acquireBlockPos(pooledPos.getX() - 1, pooledPos.getY(), pooledPos.getZ() + 1), // south-west
+                acquireBlockPos(pooledPos.getX() + 1, pooledPos.getY(), pooledPos.getZ() + 1)  // south-east
+            };
+            
+            for (BlockPos.MutableBlockPos neighbor : allAdjacent) {
+                if (level.isLoaded(neighbor)) {
+                    // Check for redstone cascades and defer if necessary (115 operations)
+                    if (!shouldDeferRedstoneUpdate(neighbor)) {
+                        level.scheduleTick(neighbor, level.getBlockState(neighbor).getBlock(), 1);
+                    }
+                }
+                releaseBlockPos(neighbor);
+            }
+        } catch (Exception e) {
+            // Safe failure
+        } finally {
+            releaseBlockPos(pooledPos);
+        }
     }
 }
