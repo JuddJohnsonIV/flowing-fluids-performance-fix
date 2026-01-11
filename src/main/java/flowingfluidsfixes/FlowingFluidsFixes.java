@@ -17,10 +17,10 @@ import net.minecraft.server.MinecraftServer;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.Map;
-import java.util.HashMap;
 import java.util.List;
-import java.util.ArrayList;
 import java.lang.reflect.Field;
+import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 
 /**
  * CONSOLIDATED Flowing Fluids Performance Optimizer
@@ -67,7 +67,7 @@ public class FlowingFluidsFixes {
     private static int blockCacheMisses = 0;
     
     // NEW: Chunk-based batching to reduce LevelChunk operations
-    private static final Map<ChunkPos, List<BlockPos>> chunkBatchMap = new HashMap<>();
+    private static final Object2ObjectOpenHashMap<ChunkPos, ObjectArrayList<BlockPos>> chunkBatchMap = new Object2ObjectOpenHashMap<>();
     private static long lastBatchProcess = 0;
     private static int batchedOperations = 0;
     
@@ -242,7 +242,8 @@ public class FlowingFluidsFixes {
             // NEW: Entity and chunk optimization when server struggling
             if (cachedMSPT > 12.0) {
                 // Reduce entity processing load (addresses TrackedEntity: 15 calls)
-                if (level.players().size() > 10) {
+                // OPTIMIZED: Use cached player positions instead of direct player scan
+                if (playerPositions.size() > 10) {
                     skippedFluidEvents.incrementAndGet();
                     return; // Skip fluid events in overloaded worlds
                 }
@@ -251,8 +252,10 @@ public class FlowingFluidsFixes {
             // NEW: Chunk operation optimization (addresses ChunkMap: 19, ServerChunkCache: 13)
             if (cachedMSPT > 10.0) {
                 // Skip fluid events in chunks far from players to reduce chunk tracking
-                ChunkPos chunkPos = new ChunkPos(pos);
-                if (!isChunkNearPlayers(chunkPos)) {
+                // OPTIMIZED: Calculate chunk coordinates directly to avoid object creation
+                int chunkX = pos.getX() >> 4;
+                int chunkZ = pos.getZ() >> 4;
+                if (!isChunkNearPlayers(chunkX, chunkZ)) {
                     skippedFluidEvents.incrementAndGet();
                     return; // Reduce ChunkMap and ServerChunkCache operations
                 }
@@ -369,12 +372,10 @@ public class FlowingFluidsFixes {
     /**
      * NEW: Check if chunk is near any players (reduces PalettedContainer operations)
      */
-    private static boolean isChunkNearPlayers(ChunkPos chunkPos) {
+    private static boolean isChunkNearPlayers(int chunkX, int chunkZ) {
         if (playerPositions.isEmpty()) return true;
         
         // Check if any player is within 4 chunks (64 blocks) of this chunk
-        int chunkX = chunkPos.x;
-        int chunkZ = chunkPos.z;
         
         for (BlockPos playerPos : playerPositions.values()) {
             if (playerPos != null) {
@@ -619,8 +620,8 @@ public class FlowingFluidsFixes {
     private static void processChunkBatches() {
         if (chunkBatchMap.isEmpty()) return;
         
-        for (Map.Entry<ChunkPos, List<BlockPos>> entry : chunkBatchMap.entrySet()) {
-            List<BlockPos> positions = entry.getValue();
+        for (Object2ObjectOpenHashMap.Entry<ChunkPos, ObjectArrayList<BlockPos>> entry : chunkBatchMap.object2ObjectEntrySet()) {
+            ObjectArrayList<BlockPos> positions = entry.getValue();
             
             if (positions.size() > 5) {
                 // Only batch chunks with 6+ positions to reduce overhead (increased from 3)
@@ -639,8 +640,11 @@ public class FlowingFluidsFixes {
     private static void addToChunkBatch(BlockPos pos) {
         if (cachedMSPT < 12.0) return; // Only batch when server really needs help (increased from 8.0)
         
-        ChunkPos chunkPos = new ChunkPos(pos);
-        chunkBatchMap.computeIfAbsent(chunkPos, k -> new ArrayList<>()).add(pos);
+        // OPTIMIZED: Calculate chunk coordinates directly to avoid object creation
+        int chunkX = pos.getX() >> 4;
+        int chunkZ = pos.getZ() >> 4;
+        ChunkPos chunkPos = new ChunkPos(chunkX, chunkZ);
+        chunkBatchMap.computeIfAbsent(chunkPos, k -> new ObjectArrayList<>()).add(pos);
     }
     
     /**
