@@ -1,0 +1,240 @@
+package flowingfluidsfixes;
+
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.material.Fluids;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.Commands;
+import net.minecraft.network.chat.Component;
+import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.context.CommandContext;
+
+/**
+ * Command interface for running performance tests.
+ * Provides in-game commands to test optimization performance.
+ */
+public class TestCommands {
+    
+    /**
+     * Register performance test commands.
+     */
+    public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
+        // Main test command
+        dispatcher.register(Commands.literal("fluidtest")
+            .executes(TestCommands::showTestStatus)
+            
+            // Start specific test
+            .then(Commands.literal("start")
+                .then(Commands.literal("baseline")
+                    .executes(ctx -> startTest(ctx, PerformanceTestFramework.TestScenario.BASELINE)))
+                .then(Commands.literal("small")
+                    .executes(ctx -> startTest(ctx, PerformanceTestFramework.TestScenario.SMALL_OCEAN)))
+                .then(Commands.literal("large")
+                    .executes(ctx -> startTest(ctx, PerformanceTestFramework.TestScenario.LARGE_OCEAN)))
+                .then(Commands.literal("river")
+                    .executes(ctx -> startTest(ctx, PerformanceTestFramework.TestScenario.RIVER_SYSTEM)))
+                .then(Commands.literal("waterfall")
+                    .executes(ctx -> startTest(ctx, PerformanceTestFramework.TestScenario.WATERFALL)))
+                .then(Commands.literal("stress")
+                    .executes(ctx -> startTest(ctx, PerformanceTestFramework.TestScenario.STRESS_TEST))))
+            
+            // Stop current test
+            .then(Commands.literal("stop")
+                .executes(TestCommands::stopTest))
+            
+            // Show results
+            .then(Commands.literal("results")
+                .executes(TestCommands::showResults))
+            
+            // Create test scenarios
+            .then(Commands.literal("create")
+                .then(Commands.literal("ocean")
+                    .then(Commands.argument("size", IntegerArgumentType.integer(10, 200))
+                        .executes(TestCommands::createOcean)))
+                .then(Commands.literal("river")
+                    .executes(TestCommands::createRiver))
+                .then(Commands.literal("waterfall")
+                    .executes(TestCommands::createWaterfall))));
+    }
+    
+    private static int showTestStatus(CommandContext<CommandSourceStack> ctx) {
+        ctx.getSource().sendSuccess(() -> Component.literal("§6[FluidTest] §f" + PerformanceTestFramework.getTestStatus()), true);
+        return 1;
+    }
+    
+    private static int startTest(CommandContext<CommandSourceStack> ctx, PerformanceTestFramework.TestScenario scenario) {
+        ctx.getSource().sendSuccess(() -> Component.literal("§6[FluidTest] §fStarting test: " + scenario.name), true);
+        PerformanceTestFramework.startTest(scenario);
+        return 1;
+    }
+    
+    private static int stopTest(CommandContext<CommandSourceStack> ctx) {
+        ctx.getSource().sendSuccess(() -> Component.literal("§6[FluidTest] §fStopping current test..."), true);
+        PerformanceTestFramework.stopTest();
+        return 1;
+    }
+    
+    private static int showResults(CommandContext<CommandSourceStack> ctx) {
+        ctx.getSource().sendSuccess(() -> Component.literal("§6[FluidTest] §fGenerating comparison report..."), true);
+        PerformanceTestFramework.generateComparisonReport();
+        return 1;
+    }
+    
+    private static int createOcean(CommandContext<CommandSourceStack> ctx) {
+        int size = IntegerArgumentType.getInteger(ctx, "size");
+        CommandSourceStack source = ctx.getSource();
+        MinecraftServer server = source.getServer();
+        
+        if (server == null) {
+            source.sendFailure(Component.literal("§c[FluidTest] Server not available"));
+            return 0;
+        }
+        
+        ServerLevel level = server.getLevel(net.minecraft.world.level.Level.OVERWORLD);
+        if (level == null) {
+            source.sendFailure(Component.literal("§c[FluidTest] Overworld not available"));
+            return 0;
+        }
+        
+        BlockPos playerPos = BlockPos.containing(source.getPosition());
+        int blocksPlaced = createOcean(level, playerPos, size);
+        
+        source.sendSuccess(() -> Component.literal("§6[FluidTest] §fCreated " + size + "x" + size + " ocean with " + blocksPlaced + " water blocks"), true);
+        return 1;
+    }
+    
+    private static int createRiver(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+        MinecraftServer server = source.getServer();
+        
+        if (server == null) {
+            source.sendFailure(Component.literal("§c[FluidTest] Server not available"));
+            return 0;
+        }
+        
+        ServerLevel level = server.getLevel(net.minecraft.world.level.Level.OVERWORLD);
+        if (level == null) {
+            source.sendFailure(Component.literal("§c[FluidTest] Overworld not available"));
+            return 0;
+        }
+        
+        BlockPos playerPos = BlockPos.containing(source.getPosition());
+        int blocksPlaced = createRiver(level, playerPos);
+        
+        source.sendSuccess(() -> Component.literal("§6[FluidTest] §fCreated river with " + blocksPlaced + " water blocks"), true);
+        return 1;
+    }
+    
+    private static int createWaterfall(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+        MinecraftServer server = source.getServer();
+        
+        if (server == null) {
+            source.sendFailure(Component.literal("§c[FluidTest] Server not available"));
+            return 0;
+        }
+        
+        ServerLevel level = server.getLevel(net.minecraft.world.level.Level.OVERWORLD);
+        if (level == null) {
+            source.sendFailure(Component.literal("§c[FluidTest] Overworld not available"));
+            return 0;
+        }
+        
+        BlockPos playerPos = BlockPos.containing(source.getPosition());
+        int blocksPlaced = createWaterfall(level, playerPos);
+        
+        source.sendSuccess(() -> Component.literal("§6[FluidTest] §fCreated waterfall with " + blocksPlaced + " water blocks"), true);
+        return 1;
+    }
+    
+    /**
+     * Create a square ocean of water.
+     */
+    private static int createOcean(ServerLevel level, BlockPos center, int size) {
+        int blocksPlaced = 0;
+        int radius = size / 2;
+        
+        for (int x = -radius; x <= radius; x++) {
+            for (int z = -radius; z <= radius; z++) {
+                BlockPos pos = center.offset(x, 0, z);
+                // Place water at different heights for variety
+                for (int y = -5; y <= 5; y++) {
+                    BlockPos waterPos = pos.offset(0, y, 0);
+                    if (level.getBlockState(waterPos).isAir() || level.getBlockState(waterPos).getBlock() == Blocks.GRASS_BLOCK) {
+                        level.setBlock(waterPos, Blocks.WATER.defaultBlockState(), 3);
+                        blocksPlaced++;
+                    }
+                }
+            }
+        }
+        
+        return blocksPlaced;
+    }
+    
+    /**
+     * Create a winding river.
+     */
+    private static int createRiver(ServerLevel level, BlockPos start) {
+        int blocksPlaced = 0;
+        BlockPos current = start;
+        
+        // Create a winding path
+        for (int i = 0; i < 100; i++) {
+            // Place water in a 3x3 area
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    BlockPos waterPos = current.offset(dx, 0, dz);
+                    if (level.getBlockState(waterPos).isAir() || level.getBlockState(waterPos).getBlock() == Blocks.GRASS_BLOCK) {
+                        level.setBlock(waterPos, Blocks.WATER.defaultBlockState(), 3);
+                        blocksPlaced++;
+                    }
+                }
+            }
+            
+            // Move to next position (winding pattern)
+            int direction = i % 4;
+            switch (direction) {
+                case 0: current = current.east(); break;
+                case 1: current = current.south(); break;
+                case 2: current = current.west(); break;
+                case 3: current = current.north(); break;
+            }
+        }
+        
+        return blocksPlaced;
+    }
+    
+    /**
+     * Create a waterfall cascade.
+     */
+    private static int createWaterfall(ServerLevel level, BlockPos top) {
+        int blocksPlaced = 0;
+        
+        // Create waterfall from top to bottom
+        for (int y = 0; y < 50; y++) {
+            BlockPos waterPos = top.offset(0, -y, 0);
+            if (level.getBlockState(waterPos).isAir()) {
+                level.setBlock(waterPos, Blocks.WATER.defaultBlockState(), 3);
+                blocksPlaced++;
+                
+                // Create splash pool at bottom
+                if (y == 49) {
+                    for (int dx = -3; dx <= 3; dx++) {
+                        for (int dz = -3; dz <= 3; dz++) {
+                            BlockPos poolPos = waterPos.offset(dx, 0, dz);
+                            if (level.getBlockState(poolPos).isAir() || level.getBlockState(poolPos).getBlock() == Blocks.GRASS_BLOCK) {
+                                level.setBlock(poolPos, Blocks.WATER.defaultBlockState(), 3);
+                                blocksPlaced++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        return blocksPlaced;
+    }
+}

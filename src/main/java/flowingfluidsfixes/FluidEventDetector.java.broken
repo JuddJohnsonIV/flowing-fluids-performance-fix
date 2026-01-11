@@ -1,0 +1,67 @@
+package flowingfluidsfixes;
+
+import net.minecraftforge.eventbus.api.SubscribeEvent;
+import net.minecraftforge.event.level.BlockEvent;
+import net.minecraftforge.event.level.LevelEvent;
+import net.minecraftforge.event.TickEvent;
+import net.minecraftforge.fml.common.Mod;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.FluidState;
+
+/**
+ * Simple fluid event detector to understand what events are actually fired.
+ * This will help us identify the real hooks we need for optimization.
+ */
+@Mod.EventBusSubscriber(modid = FlowingFluidsFixes.MOD_ID)
+public class FluidEventDetector {
+    
+    private static int eventCount = 0;
+    
+    @SubscribeEvent
+    public static void onBlockPlace(BlockEvent.EntityPlaceEvent event) {
+        if (event.getLevel() instanceof ServerLevel) {
+            BlockPos pos = event.getPos();
+            BlockState state = event.getState();
+            FluidState fluidState = state.getFluidState();
+            
+            if (!fluidState.isEmpty()) {
+                eventCount++;
+                System.out.println("[FluidEventDetector] BlockPlace: " + pos + " fluid: " + fluidState.getType());
+            }
+        }
+    }
+    
+    @SubscribeEvent
+    public static void onNeighborNotify(BlockEvent.NeighborNotifyEvent event) {
+        if (event.getLevel() instanceof ServerLevel) {
+            BlockPos pos = event.getPos();
+            BlockState state = event.getLevel().getBlockState(pos);
+            FluidState fluidState = state.getFluidState();
+            
+            if (!fluidState.isEmpty()) {
+                eventCount++;
+                System.out.println("[FluidEventDetector] NeighborNotify: " + pos + " fluid: " + fluidState.getType());
+            }
+        }
+    }
+    
+    @SubscribeEvent
+    public static void onLevelTick(LevelEvent.TickEvent event) {
+        if (event.getLevel() instanceof ServerLevel && event.getLevel().getGameTime() % 100 == 0) {
+            System.out.println("[FluidEventDetector] Level tick - Total fluid events: " + eventCount);
+            eventCount = 0; // Reset counter every 100 ticks
+        }
+    }
+    
+    @SubscribeEvent
+    public static void onServerTick(TickEvent.ServerTickEvent event) {
+        if (event.phase == TickEvent.Phase.END && event.getServer() != null) {
+            ServerLevel level = event.getServer().getLevel(net.minecraft.world.level.Level.OVERWORLD);
+            if (level != null && level.getGameTime() % 200 == 0) {
+                System.out.println("[FluidEventDetector] Server tick - Checking for fluid activity");
+            }
+        }
+    }
+}

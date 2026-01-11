@@ -1,0 +1,249 @@
+package flowingfluidsfixes;
+
+import net.minecraftforge.eventbus.api.SubscribeEvent;
+import net.minecraftforge.event.TickEvent;
+import net.minecraftforge.fml.common.Mod;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.level.material.Fluids;
+import net.minecraft.world.entity.player.Player;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.List;
+import java.util.ArrayList;
+
+/**
+ * Performance testing framework for measuring optimization impact.
+ * Provides automated testing scenarios and detailed performance metrics.
+ */
+@Mod.EventBusSubscriber(modid = "flowingfluidsfixes")
+public class PerformanceTestFramework {
+    
+    // Test state tracking
+    private static boolean testRunning = false;
+    private static String currentTest = "None";
+    private static long testStartTime = 0;
+    private static int testDuration = 0; // seconds
+    
+    // Performance metrics
+    private static final AtomicInteger testFluidEvents = new AtomicInteger(0);
+    private static final AtomicInteger testProcessedEvents = new AtomicInteger(0);
+    private static final AtomicInteger testSkippedEvents = new AtomicInteger(0);
+    private static final AtomicLong totalTestMSPT = new AtomicLong(0);
+    private static final AtomicInteger testTickCount = new AtomicInteger(0);
+    
+    // Test scenarios
+    public enum TestScenario {
+        BASELINE("Baseline - No Optimization", 30),
+        SMALL_OCEAN("Small Ocean (100x100)", 60),
+        LARGE_OCEAN("Large Ocean (200x200)", 90),
+        RIVER_SYSTEM("River System", 45),
+        WATERFALL("Waterfall Cascade", 30),
+        STRESS_TEST("Stress Test - Maximum Load", 60);
+        
+        public final String name;
+        public final int durationSeconds;
+        
+        TestScenario(String name, int durationSeconds) {
+            this.name = name;
+            this.durationSeconds = durationSeconds;
+        }
+    }
+    
+    @SubscribeEvent
+    public static void onServerTick(TickEvent.ServerTickEvent event) {
+        if (event.phase == TickEvent.Phase.END && testRunning) {
+            // Track MSPT during test
+            long currentTime = System.nanoTime();
+            if (SimpleFluidOptimizer.getAverageMSPT() > 0) {
+                totalTestMSPT.addAndGet((long)(SimpleFluidOptimizer.getAverageMSPT() * 1000)); // Convert to microseconds for precision
+                testTickCount.incrementAndGet();
+            }
+            
+            // Check if test should end
+            if (System.currentTimeMillis() - testStartTime > testDuration * 1000) {
+                endTest();
+            }
+        }
+    }
+    
+    /**
+     * Start a performance test scenario.
+     */
+    public static void startTest(TestScenario scenario) {
+        if (testRunning) {
+            System.out.println("[PerformanceTest] Test already running: " + currentTest);
+            return;
+        }
+        
+        System.out.println("[PerformanceTest] Starting test: " + scenario.name);
+        System.out.println("[PerformanceTest] Duration: " + scenario.durationSeconds + " seconds");
+        
+        // Reset test metrics
+        testFluidEvents.set(0);
+        testProcessedEvents.set(0);
+        testSkippedEvents.set(0);
+        totalTestMSPT.set(0);
+        testTickCount.set(0);
+        
+        // Start test
+        currentTest = scenario.name;
+        testDuration = scenario.durationSeconds;
+        testStartTime = System.currentTimeMillis();
+        testRunning = true;
+        
+        // Reset optimizer stats for clean measurement
+        SimpleFluidOptimizer.resetStats();
+        
+        System.out.println("[PerformanceTest] Test started - Monitor performance for " + scenario.durationSeconds + " seconds");
+    }
+    
+    /**
+     * End current test and generate report.
+     */
+    private static void endTest() {
+        if (!testRunning) return;
+        
+        testRunning = false;
+        long actualDuration = System.currentTimeMillis() - testStartTime;
+        
+        // Calculate final metrics
+        double avgMSPT = testTickCount.get() > 0 ? 
+            (totalTestMSPT.get() / 1000.0) / testTickCount.get() : 0.0;
+        double avgTPS = avgMSPT > 0 ? 1000.0 / avgMSPT : 20.0;
+        
+        int totalEvents = testFluidEvents.get();
+        int processedEvents = testProcessedEvents.get();
+        int skippedEvents = testSkippedEvents.get();
+        double efficiency = totalEvents > 0 ? (skippedEvents * 100.0 / totalEvents) : 0.0;
+        
+        // Generate detailed report
+        System.out.println("\n[PerformanceTest] ===== TEST RESULTS =====");
+        System.out.println("[PerformanceTest] Test: " + currentTest);
+        System.out.println("[PerformanceTest] Duration: " + (actualDuration / 1000.0) + " seconds");
+        System.out.println("[PerformanceTest] Average MSPT: " + String.format("%.2f", avgMSPT));
+        System.out.println("[PerformanceTest] Average TPS: " + String.format("%.1f", avgTPS));
+        System.out.println("[PerformanceTest] Total Fluid Events: " + totalEvents);
+        System.out.println("[PerformanceTest] Processed Events: " + processedEvents);
+        System.out.println("[PerformanceTest] Skipped Events: " + skippedEvents);
+        System.out.println("[PerformanceTest] Optimization Efficiency: " + String.format("%.1f", efficiency) + "%");
+        
+        // Performance classification
+        String performanceGrade = getPerformanceGrade(avgMSPT);
+        System.out.println("[PerformanceTest] Performance Grade: " + performanceGrade);
+        System.out.println("[PerformanceTest] ================================\n");
+        
+        // Store results for comparison
+        storeTestResults(currentTest, avgMSPT, avgTPS, totalEvents, efficiency);
+    }
+    
+    /**
+     * Get performance grade based on MSPT.
+     */
+    private static String getPerformanceGrade(double mspt) {
+        if (mspt < 10) return "A+ (Excellent)";
+        if (mspt < 15) return "A (Very Good)";
+        if (mspt < 20) return "B (Good)";
+        if (mspt < 25) return "C (Fair)";
+        if (mspt < 30) return "D (Poor)";
+        return "F (Very Poor)";
+    }
+    
+    /**
+     * Store test results for comparison.
+     */
+    private static final Map<String, TestResult> testResults = new HashMap<>();
+    
+    private static void storeTestResults(String testName, double mspt, double tps, int events, double efficiency) {
+        testResults.put(testName, new TestResult(mspt, tps, events, efficiency));
+    }
+    
+    /**
+     * Get all test results for comparison.
+     */
+    public static Map<String, TestResult> getAllTestResults() {
+        return new HashMap<>(testResults);
+    }
+    
+    /**
+     * Generate comparison report.
+     */
+    public static void generateComparisonReport() {
+        if (testResults.isEmpty()) {
+            System.out.println("[PerformanceTest] No test results available for comparison.");
+            return;
+        }
+        
+        System.out.println("\n[PerformanceTest] ===== COMPARISON REPORT =====");
+        
+        for (Map.Entry<String, TestResult> entry : testResults.entrySet()) {
+            TestResult result = entry.getValue();
+            System.out.println("[PerformanceTest] " + entry.getKey() + ":");
+            System.out.println("[PerformanceTest]   MSPT: " + String.format("%.2f", result.mspt));
+            System.out.println("[PerformanceTest]   TPS: " + String.format("%.1f", result.tps));
+            System.out.println("[PerformanceTest]   Events: " + result.events);
+            System.out.println("[PerformanceTest]   Efficiency: " + String.format("%.1f", result.efficiency) + "%");
+            System.out.println("[PerformanceTest]   Grade: " + getPerformanceGrade(result.mspt));
+            System.out.println("[PerformanceTest]");
+        }
+        
+        System.out.println("[PerformanceTest] ================================\n");
+    }
+    
+    /**
+     * Test result data class.
+     */
+    public static class TestResult {
+        public final double mspt;
+        public final double tps;
+        public final int events;
+        public final double efficiency;
+        
+        public TestResult(double mspt, double tps, int events, double efficiency) {
+            this.mspt = mspt;
+            this.tps = tps;
+            this.events = events;
+            this.efficiency = efficiency;
+        }
+    }
+    
+    /**
+     * Get current test status.
+     */
+    public static String getTestStatus() {
+        if (testRunning) {
+            long elapsed = System.currentTimeMillis() - testStartTime;
+            long remaining = (testDuration * 1000) - elapsed;
+            return "Running: " + currentTest + " (" + (remaining / 1000) + "s remaining)";
+        }
+        return "Idle";
+    }
+    
+    /**
+     * Stop current test immediately.
+     */
+    public static void stopTest() {
+        if (testRunning) {
+            System.out.println("[PerformanceTest] Stopping test: " + currentTest);
+            endTest();
+        }
+    }
+    
+    /**
+     * Track fluid events during testing.
+     */
+    public static void trackFluidEvent(boolean processed) {
+        if (testRunning) {
+            testFluidEvents.incrementAndGet();
+            if (processed) {
+                testProcessedEvents.incrementAndGet();
+            } else {
+                testSkippedEvents.incrementAndGet();
+            }
+        }
+    }
+}
