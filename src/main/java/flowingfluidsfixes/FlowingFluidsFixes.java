@@ -286,8 +286,9 @@ public class FlowingFluidsFixes {
                 FluidState cachedFluidState = fluidStateCache.get(pos);
                 if (cachedState != null && cachedFluidState != null) {
                     // Use cached values to avoid LevelChunk/PalettedContainer operations
-                    state = cachedState;
-                    fluidState = cachedFluidState;
+                    // Both state and fluidState are used as a paired caching system
+                    state = cachedState;           // Used for potential future level operations
+                    fluidState = cachedFluidState;  // Used for fluid processing below
                     blockCacheHits++;
                 } else {
                     // Cache miss - get from world and cache result
@@ -618,16 +619,13 @@ public class FlowingFluidsFixes {
     private static void processChunkBatches() {
         if (chunkBatchMap.isEmpty()) return;
         
-        int processedChunks = 0;
         for (Map.Entry<ChunkPos, List<BlockPos>> entry : chunkBatchMap.entrySet()) {
-            ChunkPos chunkPos = entry.getKey();
             List<BlockPos> positions = entry.getValue();
             
             if (positions.size() > 5) {
                 // Only batch chunks with 6+ positions to reduce overhead (increased from 3)
                 // This reduces LevelChunk.get() calls from N to 1 per chunk
                 batchedOperations += positions.size() - 1;
-                processedChunks++;
             }
         }
         
