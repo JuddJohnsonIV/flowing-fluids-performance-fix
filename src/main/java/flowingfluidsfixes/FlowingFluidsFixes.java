@@ -240,20 +240,8 @@ public class FlowingFluidsFixes {
             return;
         }
         
-        // Additional MSPT-based filtering - EARLY EXIT before ANY expensive operations
-        if (cachedMSPT > 60.0) {
-            if (currentEvents % 20 != 0) return; // Skip 95%
-        } else if (cachedMSPT > 50.0) {
-            if (currentEvents % 10 != 0) return; // Skip 90%
-        } else if (cachedMSPT > 40.0) {
-            if (currentEvents % 5 != 0) return; // Skip 80%
-        } else if (cachedMSPT > 30.0) {
-            if (currentEvents % 3 != 0) return; // Skip 66%
-        } else if (cachedMSPT > 20.0) {
-            if (currentEvents % 5 != 0) return; // Skip 80%
-        } else if (cachedMSPT > 10.0) {
-            if (currentEvents % 2 != 0) return; // Skip 50% when moderate load
-        }
+        // Additional MSPT-based filtering - REMOVED OLD AGGRESSIVE FILTERING
+        // Replaced with slope-aware throttling above to prevent water from getting stuck
         
         // CRITICAL: Skip ALL world access when server is struggling
         if (cachedMSPT > 50.0) {
@@ -277,6 +265,26 @@ public class FlowingFluidsFixes {
                     }
                 } else {
                     levelAccessCacheMisses++;
+                }
+            }
+            
+            // NEW: Slope-aware throttling - prioritize water on gradients
+            if (cachedMSPT > 10.0) {
+                // Check if this is a slope situation (water needs to flow downhill)
+                boolean isSlopeSituation = isOnSlope(level, pos);
+                
+                if (isSlopeSituation) {
+                    // Allow slope updates even during high MSPT - critical for fluid flow
+                    // Don't skip slope updates as they break the cascade
+                } else {
+                    // Apply normal throttling for non-slope situations
+                    if (cachedMSPT > 30.0) {
+                        if (currentEvents % 3 != 0) return; // Skip 66%
+                    } else if (cachedMSPT > 20.0) {
+                        if (currentEvents % 5 != 0) return; // Skip 80%
+                    } else if (cachedMSPT > 10.0) {
+                        if (currentEvents % 2 != 0) return; // Skip 50%
+                    }
                 }
             }
             
@@ -666,8 +674,58 @@ public class FlowingFluidsFixes {
     }
     
     /**
-     * Process chunk batches to reduce LevelChunk operations
+     * NEW: Check if water forms a slope and needs to flow downhill
+     * This prevents water from getting "stuck" when water levels are close together
      */
+    private static boolean isOnSlope(ServerLevel level, BlockPos pos) {
+        // Get current water level
+        BlockState currentState = level.getBlockState(pos);
+        FluidState currentFluid = currentState.getFluidState();
+        
+        if (currentFluid.isEmpty()) {
+            return false; // Not water, no slope needed
+        }
+        
+        int currentLevel = currentFluid.getAmount(); // Water level (1-8, 8 = full block)
+        
+        // Check adjacent positions for lower water levels or empty spaces
+        BlockPos[] adjacent = {
+            pos.north(), pos.south(), pos.east(), pos.west(),
+            pos.north().east(), pos.north().west(), 
+            pos.south().east(), pos.south().west()
+        };
+        
+        for (BlockPos adjacentPos : adjacent) {
+            if (!level.isLoaded(adjacentPos)) continue;
+            
+            BlockState adjacentState = level.getBlockState(adjacentPos);
+            FluidState adjacentFluid = adjacentState.getFluidState();
+            
+            // If adjacent position has lower water level or is empty, this is a slope
+            if (adjacentFluid.isEmpty()) {
+                return true; // Water can flow into empty space
+            } else if (adjacentFluid.getType() == currentFluid.getType()) {
+                int adjacentLevel = adjacentFluid.getAmount();
+                if (adjacentLevel < currentLevel) {
+                    return true; // Water can flow to lower level
+                }
+            }
+        }
+        
+        // Check below for downward flow
+        BlockPos belowPos = pos.below();
+        if (level.isLoaded(belowPos)) {
+            BlockState belowState = level.getBlockState(belowPos);
+            FluidState belowFluid = belowState.getFluidState();
+            
+            if (belowFluid.isEmpty() || 
+                (belowFluid.getType() == currentFluid.getType() && belowFluid.getAmount() < 8)) {
+                return true; // Water can flow down
+            }
+        }
+        
+        return false; // No slope detected
+    }
     private static void processChunkBatches() {
         if (CHUNK_BATCH_MAP.isEmpty()) return;
         
