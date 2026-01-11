@@ -10,11 +10,9 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
-import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.chunk.PalettedContainer;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -25,7 +23,6 @@ import java.util.List;
 import java.util.ArrayList;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.TimeUnit;
 import java.lang.reflect.Field;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
@@ -73,7 +70,6 @@ public class FlowingFluidsFixes {
     private static long lastBlockCacheClear = 0;
     private static int blockCacheHits = 0;
     private static int blockCacheMisses = 0;
-    private static boolean allowCaching = false; // SAFETY: Disable caching during mod initialization
     
     // NEW: Chunk-based batching to reduce LevelChunk operations
     private static final Object2ObjectOpenHashMap<ChunkPos, ObjectArrayList<BlockPos>> CHUNK_BATCH_MAP = new Object2ObjectOpenHashMap<>();
@@ -108,17 +104,6 @@ public class FlowingFluidsFixes {
         pos -> {}, // MutableBlockPos doesn't need reset
         pos -> {}  // MutableBlockPos doesn't need cleanup
     );
-    
-    // BlockState object pool for PalettedContainer optimization (203 operations)
-    private static final ObjectPool<BlockState> BLOCK_STATE_POOL = new ObjectPool<>(
-        () -> Blocks.AIR.defaultBlockState(),
-        state -> {}, // BlockStates are immutable, no reset needed
-        state -> {}  // BlockStates are immutable, no cleanup needed
-    );
-    
-    // PalettedContainer cache to reduce chunk data access (203 operations)
-    private static final ConcurrentHashMap<ChunkPos, PalettedContainer<BlockState>> PALETTED_CACHE = 
-        new ConcurrentHashMap<>();
     
     // Entity processing optimization (1293 operations)
     private static final AtomicInteger entityProcessingSkips = new AtomicInteger(0);
@@ -162,9 +147,7 @@ public class FlowingFluidsFixes {
         // Detect Flowing Fluids and setup reflection
         detectFlowingFluids();
         
-        // SAFETY: Enable caching only after all mods have finished initializing
-        allowCaching = true;
-        System.out.println("[FlowingFluidsFixes] Caching enabled - systems consolidated and ready");
+        System.out.println("[FlowingFluidsFixes] Systems consolidated and ready");
     }
     
     /**
@@ -286,10 +269,17 @@ public class FlowingFluidsFixes {
             // INTELLIGENT: Process fluids based on server capacity and priority
             processFluidQueueBasedOnCapacity();
             
+            // Process deferred redstone updates when server is healthy (115 operations)
+            processDeferredRedstoneUpdates();
+            
+            // Entity processing optimization (1293 operations)
+            if (shouldSkipEntityProcessing()) {
+                return; // Skip non-critical entity processing
+            }
+            
             // Update counters
             eventsThisTick.incrementAndGet();
             totalFluidEvents.incrementAndGet();
-            return;
         }
     }
     
@@ -308,25 +298,6 @@ public class FlowingFluidsFixes {
     private static void releaseBlockPos(BlockPos.MutableBlockPos pos) {
         if (pos != null) {
             BLOCK_POS_POOL.release(pos);
-        }
-    }
-    
-    /**
-     * NEW: Get cached PalettedContainer to reduce chunk data access
-     */
-    private static PalettedContainer<BlockState> getCachedPalettedContainer(ChunkPos chunkPos) {
-        if (cachedMSPT > 15.0) {
-            return PALETTED_CACHE.get(chunkPos);
-        }
-        return null; // Don't use cache when server is healthy
-    }
-    
-    /**
-     * NEW: Cache PalettedContainer for future use
-     */
-    private static void cachePalettedContainer(ChunkPos chunkPos, PalettedContainer<BlockState> container) {
-        if (cachedMSPT > 15.0 && PALETTED_CACHE.size() < 1000) {
-            PALETTED_CACHE.put(chunkPos, container);
         }
     }
     
@@ -367,28 +338,6 @@ public class FlowingFluidsFixes {
                 }
             }
         }
-    }
-    
-    /**
-     * NEW: Check if chunk is near any players (reduces PalettedContainer operations)
-     */
-    private static boolean isChunkNearPlayers(int chunkX, int chunkZ) {
-        if (playerPositions.isEmpty()) return true;
-        
-        // Check if any player is within 4 chunks (64 blocks) of this chunk
-        
-        for (BlockPos playerPos : playerPositions.values()) {
-            if (playerPos != null) {
-                int playerChunkX = playerPos.getX() >> 4;
-                int playerChunkZ = playerPos.getZ() >> 4;
-                int distanceX = Math.abs(chunkX - playerChunkX);
-                int distanceZ = Math.abs(chunkZ - playerChunkZ);
-                if (distanceX <= 4 && distanceZ <= 4) {
-                    return true; // Chunk is near player
-                }
-            }
-        }
-        return false; // No players near this chunk
     }
     
     /**
@@ -488,13 +437,13 @@ public class FlowingFluidsFixes {
         }
         
         if (server != null) {
-            ServerLevel level = server.getLevel(net.minecraft.world.level.Level.OVERWORLD);
-            if (level != null && !level.players().isEmpty()) {
+            ServerLevel serverLevel = server.getLevel(net.minecraft.world.level.Level.OVERWORLD);
+            if (serverLevel != null && !serverLevel.players().isEmpty()) {
                 playerPositions.clear();
                 // Only update for first few players when struggling
                 int maxPlayers = cachedMSPT > 20.0 ? 3 : 10; // Limit players when struggling
                 int playerCount = 0;
-                for (Player player : level.players()) {
+                for (Player player : serverLevel.players()) {
                     if (playerCount >= maxPlayers) break;
                     playerPositions.put(player, player.blockPosition());
                     playerCount++;
@@ -682,19 +631,6 @@ public class FlowingFluidsFixes {
         
         // Clear batch map after processing
         CHUNK_BATCH_MAP.clear();
-    }
-    
-    /**
-     * Add position to chunk batch for LevelChunk optimization
-     */
-    private static void addToChunkBatch(BlockPos pos) {
-        if (cachedMSPT < 12.0) return; // Only batch when server really needs help (increased from 8.0)
-        
-        // OPTIMIZED: Calculate chunk coordinates directly to avoid object creation
-        int chunkX = pos.getX() >> 4;
-        int chunkZ = pos.getZ() >> 4;
-        ChunkPos chunkPos = new ChunkPos(chunkX, chunkZ);
-        CHUNK_BATCH_MAP.computeIfAbsent(chunkPos, k -> new ObjectArrayList<>()).add(pos);
     }
     
     /**
