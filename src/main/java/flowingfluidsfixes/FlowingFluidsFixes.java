@@ -4,8 +4,8 @@ import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.event.server.ServerStartingEvent;
 import net.minecraftforge.event.level.BlockEvent;
-import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
+import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.MinecraftServer;
@@ -62,7 +62,7 @@ public class FlowingFluidsFixes {
         bus.addListener(this::commonSetup);
     }
     
-    private void commonSetup(final FMLCommonSetupEvent _event) {
+    private void commonSetup(final FMLCommonSetupEvent event) {
         // Simple initialization - no complex systems
         System.out.println("[FlowingFluidsFixes] Simplified optimizer loaded");
     }
@@ -125,7 +125,7 @@ public class FlowingFluidsFixes {
      * SERVER TICK HANDLER - MSPT monitoring and player chunk updates
      */
     @SubscribeEvent
-    public void onServerTick(TickEvent.ServerTickEvent event) {
+    public void onServerTick(final TickEvent.ServerTickEvent event) {
         if (event.phase == TickEvent.Phase.END) {
             // Update MSPT tracking
             updateMSPT();
@@ -141,7 +141,7 @@ public class FlowingFluidsFixes {
      * SPATIAL PARTITIONING - Check if player is in nearby chunks
      * Replaces worldwide player scans with chunk-based checking
      */
-    private static boolean isPlayerInNearbyChunk(ServerLevel _level, BlockPos pos) {
+    private static boolean isPlayerInNearbyChunk(ServerLevel level, BlockPos pos) {
         if (!allowCaching) {
             return true; // Default to true during initialization
         }
