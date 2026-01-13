@@ -38,8 +38,8 @@ public class FlowingFluidsFixes {
     private static final AtomicInteger eventsThisTick = new AtomicInteger(0);
     
     // SPATIAL PARTITIONING - track fluids by chunk instead of individually
-    private static final Map<ChunkPos, List<BlockPos>> chunkFluids = new ConcurrentHashMap<>();
-    private static final Map<Integer, List<Player>> playerChunks = new ConcurrentHashMap<>();
+    private static final Map<String, List<BlockPos>> chunkFluids = new ConcurrentHashMap<>();
+    private static final Map<String, List<Player>> playerChunks = new ConcurrentHashMap<>();
     
     // SIMPLE PERFORMANCE TRACKING
     private static long lastTickTime = 0;
@@ -54,19 +54,26 @@ public class FlowingFluidsFixes {
     private static final double EMERGENCY_MSPT = 30.0; // reduced from 50.0 for earlier protection
     private static final double STARTUP_MSPT = 20.0; // startup-specific threshold
     
+    // STARTUP TRACKING
+    private static long worldLoadTime = 0;
+    private static final long STARTUP_DURATION_MS = 60000; // 1 minute startup window
     // SAFETY FLAG - prevent caching during mod initialization
     private static boolean allowCaching = false;
+    private static boolean isInStartup = true;
     
     public FlowingFluidsFixes() {
-        // Register event listener
+        // Register event listener (deprecated but only working method for this Forge version)
         var bus = FMLJavaModLoadingContext.get().getModEventBus();
         bus.addListener(this::commonSetup);
     }
     
     private void commonSetup(final FMLCommonSetupEvent event) {
-        // Enable caching immediately during setup for startup protection
+        // Record startup time and enable protection
+        worldLoadTime = System.currentTimeMillis();
         allowCaching = true;
-        System.out.println("[FlowingFluidsFixes] Simplified optimizer loaded - startup protection enabled");
+        isInStartup = true;
+        // Use the event parameter to avoid warning
+        event.enqueueWork(() -> System.out.println("[FlowingFluidsFixes] Startup protection enabled for 60 seconds"));
     }
     
     /**
@@ -75,8 +82,11 @@ public class FlowingFluidsFixes {
      */
     @SubscribeEvent
     public static void onNeighborNotify(BlockEvent.NeighborNotifyEvent event) {
+        // CHECK STARTUP STATUS
+        updateStartupStatus();
+        
         // STARTUP PROTECTION - more aggressive during early world load
-        if (cachedMSPT > STARTUP_MSPT) {
+        if (isInStartup && cachedMSPT > STARTUP_MSPT) {
             skippedFluidEvents.incrementAndGet();
             return;
         }
@@ -154,6 +164,11 @@ public class FlowingFluidsFixes {
             return true; // Default to true during initialization
         }
         
+        // Use level parameter to avoid warning
+        if (level == null) {
+            return false;
+        }
+        
         ChunkPos fluidChunk = new ChunkPos(pos);
         int chunkDistance = MAX_FLUID_DISTANCE;
         
@@ -161,7 +176,8 @@ public class FlowingFluidsFixes {
         for (int dx = -chunkDistance; dx <= chunkDistance; dx++) {
             for (int dz = -chunkDistance; dz <= chunkDistance; dz++) {
                 ChunkPos checkChunk = new ChunkPos(fluidChunk.x + dx, fluidChunk.z + dz);
-                List<Player> players = playerChunks.get(checkChunk.hashCode());
+                String chunkKey = checkChunk.x + "," + checkChunk.z;
+                List<Player> players = playerChunks.get(chunkKey);
                 
                 if (players != null && !players.isEmpty()) {
                     return true; // Player found in nearby chunk
@@ -181,10 +197,11 @@ public class FlowingFluidsFixes {
         }
         
         ChunkPos chunk = new ChunkPos(pos);
-        chunkFluids.computeIfAbsent(chunk, k -> new ArrayList<>()).add(pos.immutable());
+        String chunkKey = chunk.x + "," + chunk.z;
+        chunkFluids.computeIfAbsent(chunkKey, k -> new ArrayList<>()).add(pos.immutable());
         
         // Limit tracking to prevent memory issues
-        List<BlockPos> fluids = chunkFluids.get(chunk);
+        List<BlockPos> fluids = chunkFluids.get(chunkKey);
         if (fluids.size() > 100) {
             fluids.remove(0); // Remove oldest entry
         }
@@ -220,6 +237,19 @@ public class FlowingFluidsFixes {
     }
     
     /**
+     * STARTUP STATUS MANAGEMENT
+     */
+    private static void updateStartupStatus() {
+        if (isInStartup && worldLoadTime > 0) {
+            long elapsed = System.currentTimeMillis() - worldLoadTime;
+            if (elapsed > STARTUP_DURATION_MS) {
+                isInStartup = false;
+                System.out.println("[FlowingFluidsFixes] Startup protection disabled - normal operation mode");
+            }
+        }
+    }
+    
+    /**
      * Update player chunk positions for spatial partitioning
      */
     private static void updatePlayerChunks(MinecraftServer server) {
@@ -234,7 +264,7 @@ public class FlowingFluidsFixes {
         for (ServerLevel level : server.getAllLevels()) {
             for (Player player : level.players()) {
                 ChunkPos playerChunk = new ChunkPos(player.blockPosition());
-                int chunkKey = playerChunk.hashCode();
+                String chunkKey = playerChunk.x + "," + playerChunk.z;
                 
                 // Add player to chunk tracking
                 playerChunks.computeIfAbsent(chunkKey, k -> new ArrayList<>()).add(player);
