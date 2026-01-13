@@ -132,6 +132,21 @@ public class FlowingFluidsFixes {
     }
     
     /**
+     * FLUID PLACE BLOCK EVENT - Catch Flowing Fluids mod direct operations
+     */
+    @SubscribeEvent
+    public static void onFluidPlaceBlock(BlockEvent.FluidPlaceBlockEvent event) {
+        // Apply level operation throttling to catch Flowing Fluids mod bypass
+        if (!shouldAllowLevelOperation()) {
+            event.setCanceled(true); // Block the fluid placement
+            return;
+        }
+        
+        // Track that we intercepted a Flowing Fluids operation
+        incrementLevelOps();
+    }
+    
+    /**
      * SIMPLE SERVER START HANDLER - clear caches and enable systems
      */
     @SubscribeEvent
@@ -331,6 +346,13 @@ public class FlowingFluidsFixes {
         }
         
         return true; // Allow level operation
+    }
+    
+    /**
+     * Increment level operations counter for tracking
+     */
+    public static void incrementLevelOps() {
+        levelOpsThisTick.incrementAndGet();
     }
     public static boolean shouldProcessChunk() {
         // Always allow during emergency mode to prevent issues
