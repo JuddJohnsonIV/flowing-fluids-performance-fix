@@ -37,28 +37,38 @@ public class FlowingFluidsFixes {
     // MSPT tracking with atomic reference
     private static final AtomicReference<Double> currentMSPT = new AtomicReference<>(0.0);
     
-    // ULTRA AGGRESSIVE CACHING - Handle 15.3M block operations
+    // FLOWING FLUIDS SPECIFIC CACHING - Target actual bottlenecks from spark profile
     private static final ConcurrentHashMap<String, AtomicInteger> chunkOperationCounts = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<BlockPos, BlockState> blockStateCache = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<BlockPos, FluidState> fluidStateCache = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<BlockPos, Long> cacheTimestamps = new ConcurrentHashMap<>();
     
-    // ADVANCED CACHING SYSTEMS
+    // FLOWING FLUIDS SPECIFIC CACHES - Target methods from spark profile
     private static final ConcurrentHashMap<String, Boolean> chunkFluidCache = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<BlockPos, Integer> blockAccessCount = new ConcurrentHashMap<>();
     
-    // ULTRA AGGRESSIVE THRESHOLDS - For 15.3M block operations
-    private static final double EMERGENCY_MSPT = 15.0; // LOWERED from 20.0
-    private static final double WARNING_MSPT = 10.0; // LOWERED from 16.0
-    private static final double STARTUP_MSPT = 8.0; // LOWERED from 12.0
-    private static final double CRITICAL_MSPT = 12.0; // NEW: Critical threshold
+    // FLOWING FLUIDS METHOD CACHES - Cache results of expensive method calls
+    private static final ConcurrentHashMap<String, Boolean> canFitIntoFluidCache = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, Boolean> canFluidFlowCache = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, Boolean> matchInfiniteBiomesCache = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, Boolean> canSpreadToCache = new ConcurrentHashMap<>();
     
-    // ULTRA AGGRESSIVE LIMITS
-    private static final int MAX_EVENTS_PER_TICK = 50; // REDUCED from 120
-    private static final int MAX_BLOCK_OPERATIONS_PER_TICK = 100; // NEW: Block limit
+    // FLOWING FLUIDS SPECIFIC THRESHOLDS - Based on spark profile analysis
+    private static final double EMERGENCY_MSPT = 15.0; // Emergency threshold
+    private static final double WARNING_MSPT = 10.0; // Warning threshold
+    private static final double STARTUP_MSPT = 8.0; // Startup threshold
+    private static final double CRITICAL_MSPT = 12.0; // Critical threshold
     
-    // FLUID THROTTLING - Handle 15.3M block operations
-    private static final long CACHE_EXPIRY_MS = 3000; // REDUCED from 5000
+    // FLOWING FLUIDS SPECIFIC LIMITS - Target actual bottlenecks
+    private static final int MAX_EVENTS_PER_TICK = 50; // Event limit
+    private static final int MAX_BLOCK_OPERATIONS_PER_TICK = 100; // Block operation limit
+    private static final int MAX_FLUID_METHOD_CALLS_PER_TICK = 200; // Fluid method call limit
+    
+    // FLOWING FLUIDS THROTTLING - Target methods from spark profile
+    private static final long CACHE_EXPIRY_MS = 3000; // Cache expiry time
+    
+    // FLOWING FLUIDS METHOD TRACKING
+    private static final AtomicInteger fluidMethodCalls = new AtomicInteger(0);
     
     // STARTUP PROTECTION
     private static long worldLoadTime = 0;
@@ -82,7 +92,57 @@ public class FlowingFluidsFixes {
     
     public static boolean shouldProcessFluid() {
         double mspt = getMSPT();
-        return mspt < EMERGENCY_MSPT && (tickCount.get() % (mspt > 10.0 ? 5 : 1)) == 0;
+        // More aggressive throttling based on spark profile analysis
+        if (mspt > EMERGENCY_MSPT) return false;
+        if (mspt > CRITICAL_MSPT && tickCount.get() % 8 != 0) return false;
+        if (mspt > WARNING_MSPT && tickCount.get() % 2 != 0) return false;
+        return fluidMethodCalls.get() < MAX_FLUID_METHOD_CALLS_PER_TICK;
+    }
+    
+    // FLOWING FLUIDS SPECIFIC METHOD THROTTLING
+    public static boolean shouldProcessFluidMethod(String methodName) {
+        if (!shouldProcessFluid()) {
+            return false;
+        }
+        
+        double mspt = getMSPT();
+        
+        // Ultra aggressive throttling for expensive methods
+        if (methodName.contains("canFitIntoFluid") || methodName.contains("canFluidFlowFromPosToDirection")) {
+            if (mspt > WARNING_MSPT && tickCount.get() % 5 != 0) return false;
+            if (mspt > STARTUP_MSPT && tickCount.get() % 2 != 0) return false;
+        }
+        
+        if (methodName.contains("matchInfiniteBiomes")) {
+            if (mspt > STARTUP_MSPT && tickCount.get() % 3 != 0) return false;
+        }
+        
+        fluidMethodCalls.incrementAndGet();
+        return true;
+    }
+    
+    // FLOWING FLUIDS METHOD CACHING
+    public static Boolean getCachedFluidMethodResult(String methodName, String key) {
+        ConcurrentHashMap<String, Boolean> cache = getMethodCache(methodName);
+        if (cache != null) {
+            return cache.get(key);
+        }
+        return null;
+    }
+    
+    public static void setCachedFluidMethodResult(String methodName, String key, boolean result) {
+        ConcurrentHashMap<String, Boolean> cache = getMethodCache(methodName);
+        if (cache != null) {
+            cache.put(key, result);
+        }
+    }
+    
+    private static ConcurrentHashMap<String, Boolean> getMethodCache(String methodName) {
+        if (methodName.contains("canFitIntoFluid")) return canFitIntoFluidCache;
+        if (methodName.contains("canFluidFlowFromPosToDirection")) return canFluidFlowCache;
+        if (methodName.contains("matchInfiniteBiomes")) return matchInfiniteBiomesCache;
+        if (methodName.contains("canSpreadTo")) return canSpreadToCache;
+        return null;
     }
     
     public static boolean shouldProcessEntity() {
@@ -235,6 +295,7 @@ public class FlowingFluidsFixes {
             
             // Reset operation counters
             blockOperationsThisTick.set(0);
+            fluidMethodCalls.set(0); // Reset fluid method calls
             
             // ULTRA AGGRESSIVE MSPT estimation
             if (tickCount.get() % 50 == 0) { // More frequent updates
@@ -264,6 +325,11 @@ public class FlowingFluidsFixes {
             // Periodic cache cleanup
             if (tickCount.get() % 200 == 0) {
                 cleanupCaches();
+            }
+            
+            // Clean fluid method caches more frequently
+            if (tickCount.get() % 100 == 0) {
+                cleanupFluidMethodCaches();
             }
         }
     }
@@ -317,6 +383,32 @@ public class FlowingFluidsFixes {
             if (blockAccessCount.size() > 5000) {
                 blockAccessCount.clear();
             }
+            // Clean fluid method caches aggressively during high MSPT
+            if (canFitIntoFluidCache.size() > 1000) canFitIntoFluidCache.clear();
+            if (canFluidFlowCache.size() > 1000) canFluidFlowCache.clear();
+            if (matchInfiniteBiomesCache.size() > 500) matchInfiniteBiomesCache.clear();
+            if (canSpreadToCache.size() > 1000) canSpreadToCache.clear();
+        }
+    }
+    
+    // FLOWING FLUIDS SPECIFIC METHOD CACHE CLEANUP
+    private static void cleanupFluidMethodCaches() {
+        long currentTime = System.currentTimeMillis();
+        
+        // Clean method caches based on age and size
+        int maxCacheSize = getMSPT() > WARNING_MSPT ? 500 : 2000;
+        
+        if (canFitIntoFluidCache.size() > maxCacheSize) {
+            canFitIntoFluidCache.clear();
+        }
+        if (canFluidFlowCache.size() > maxCacheSize) {
+            canFluidFlowCache.clear();
+        }
+        if (matchInfiniteBiomesCache.size() > maxCacheSize / 2) {
+            matchInfiniteBiomesCache.clear();
+        }
+        if (canSpreadToCache.size() > maxCacheSize) {
+            canSpreadToCache.clear();
         }
     }
     
@@ -339,5 +431,6 @@ public class FlowingFluidsFixes {
         eventsThisTick.set(0);
         tickCount.set(0);
         blockOperationsThisTick.set(0);
+        fluidMethodCalls.set(0); // Reset fluid method calls
     }
 }
