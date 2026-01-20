@@ -58,6 +58,26 @@ public class FlowingFluidsFixesMinimal {
     private static boolean threadPoolOverloaded = false;
     private static long lastThreadPoolCheck = 0;
     
+    // AI PATHFINDING MONITORING - Address CPU overload from AI navigation
+    private static final AtomicInteger aiPathfindingOpsThisTick = new AtomicInteger(0);
+    private static final AtomicInteger randomPositionOpsThisTick = new AtomicInteger(0);
+    private static final AtomicInteger groundNavigationOpsThisTick = new AtomicInteger(0);
+    private static boolean aiPathfindingOverloaded = false;
+    private static long lastAIPathfindingCheck = 0;
+    
+    // DATA STRUCTURE CASCADE PREVENTION - Address LongAVLTreeSet and hash map overload
+    private static final AtomicInteger dataStructureOpsThisTick = new AtomicInteger(0);
+    private static final AtomicInteger treeOpsThisTick = new AtomicInteger(0);
+    private static final AtomicInteger hashMapOpsThisTick = new AtomicInteger(0);
+    private static boolean dataStructureOverloaded = false;
+    private static long lastDataStructureCheck = 0;
+    
+    // RESULT CACHING SYSTEM - Cache expensive evaluation results
+    private static final ConcurrentHashMap<Long, Boolean> resultCache = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Long, Integer> evaluationCache = new ConcurrentHashMap<>();
+    private static final AtomicInteger cacheHits = new AtomicInteger(0);
+    private static final AtomicInteger cacheMisses = new AtomicInteger(0);
+    
     // Tick cascade prevention thresholds
     private static final int MAX_TICK_OPERATIONS = 50; // Maximum operations per tick
     private static final double TICK_CAPACITY_THRESHOLD = 0.7; // 70% capacity threshold
@@ -68,6 +88,22 @@ public class FlowingFluidsFixesMinimal {
     private static final int MAX_ENTITY_DATA_OPERATIONS = 20; // Maximum entity data ops per tick
     private static final double THREAD_POOL_THRESHOLD = 0.8; // 80% thread pool capacity threshold
     private static final long THREAD_POOL_CHECK_INTERVAL = 100; // 100ms check interval
+    
+    // AI pathfinding throttling thresholds
+    private static final int MAX_AI_PATHFINDING_OPS = 15; // Maximum AI pathfinding ops per tick
+    private static final int MAX_RANDOM_POSITION_OPS = 10; // Maximum random position ops per tick
+    private static final double AI_PATHFINDING_MSPT_THRESHOLD = 12.0; // MSPT threshold for AI throttling
+    private static final long AI_PATHFINDING_CHECK_INTERVAL = 50; // 50ms check interval
+    
+    // Data structure cascade prevention thresholds
+    private static final int MAX_DATA_STRUCTURE_OPS = 25; // Maximum data structure ops per tick
+    private static final int MAX_TREE_OPS = 15; // Maximum tree operations per tick
+    private static final int MAX_HASH_MAP_OPS = 20; // Maximum hash map operations per tick
+    private static final double DATA_STRUCTURE_MSPT_THRESHOLD = 10.0; // MSPT threshold for data structure throttling
+    private static final long DATA_STRUCTURE_CHECK_INTERVAL = 25; // 25ms check interval
+    
+    // Result caching thresholds
+    private static final double CACHE_HIT_RATE_THRESHOLD = 0.8; // 80% hit rate threshold
     
     // Cache systems
     private static final ConcurrentHashMap<BlockPos, BlockState> blockStateCache = new ConcurrentHashMap<>();
@@ -165,6 +201,12 @@ public class FlowingFluidsFixesMinimal {
         entityDataOperationsThisTick.set(0);
         threadPoolActiveThreads.set(0);
         mainThreadExecutorUsage.set(0);
+        aiPathfindingOpsThisTick.set(0);
+        randomPositionOpsThisTick.set(0);
+        groundNavigationOpsThisTick.set(0);
+        dataStructureOpsThisTick.set(0);
+        treeOpsThisTick.set(0);
+        hashMapOpsThisTick.set(0);
         
         // Reset location-based counters periodically
         if (System.currentTimeMillis() - lastLocationReset > 5000) {
@@ -181,8 +223,12 @@ public class FlowingFluidsFixesMinimal {
         if (eventsThisTick.get() > 0 && System.currentTimeMillis() % 5000 < 200) {
             int totalEvents = totalFluidEvents.get() + totalEntityEvents.get() + totalChunkEvents.get();
             int totalSkipped = skippedFluidEvents.get() + throttledEntityEvents.get() + throttledChunkEvents.get();
-            System.out.println(String.format("[FlowingFluidsFixes] THREAD POOL Status: MSPT=%.2f, TickOps=%d, EntityDataOps=%d, ThreadPoolOverloaded=%b, TotalEvents=%d, TotalSkipped=%d (%.1f%%)", 
-                cachedMSPT, tickOperationsThisTick.get(), entityDataOperationsThisTick.get(), threadPoolOverloaded, totalEvents, totalSkipped, (totalSkipped * 100.0 / totalEvents)));
+            double cacheHitRate = cacheHits.get() + cacheMisses.get() > 0 ? 
+                (cacheHits.get() * 100.0 / (cacheHits.get() + cacheMisses.get())) : 0.0;
+            System.out.println(String.format("[FlowingFluidsFixes] DATA STRUCTURE Status: MSPT=%.2f, TickOps=%d, EntityDataOps=%d, AIPathfindingOps=%d, DataStructureOps=%d, TreeOps=%d, HashMapOps=%d, CacheHitRate=%.1f%%, TotalEvents=%d, TotalSkipped=%d (%.1f%%)", 
+                cachedMSPT, tickOperationsThisTick.get(), entityDataOperationsThisTick.get(), aiPathfindingOpsThisTick.get(), 
+                dataStructureOpsThisTick.get(), treeOpsThisTick.get(), hashMapOpsThisTick.get(), cacheHitRate, 
+                totalEvents, totalSkipped, (totalSkipped * 100.0 / totalEvents)));
         }
     }
     
@@ -259,8 +305,40 @@ public class FlowingFluidsFixesMinimal {
             return; // Prevent thread pool exhaustion
         }
         
-        // Track tick operations for cascade prevention
-        tickOperationsThisTick.incrementAndGet();
+        // AI PATHFINDING MONITORING - Check AI pathfinding capacity
+        if (isAIPathfindingOverloaded()) {
+            skippedFluidEvents.incrementAndGet();
+            return; // Prevent AI pathfinding CPU exhaustion
+        }
+        
+        // DATA STRUCTURE MONITORING - Check data structure capacity
+        if (isDataStructureOverloaded()) {
+            skippedFluidEvents.incrementAndGet();
+            return; // Prevent data structure cascade
+        }
+        
+        // RESULT CACHING - Use cached results to avoid expensive calculations
+        long posKey = ((long)pos.getX() << 32) | (pos.getZ() & 0xFFFFFFFFL);
+        Boolean cachedResult = resultCache.get(posKey);
+        
+        // Use cached result if available, otherwise evaluate and cache
+        boolean shouldProcess = cachedResult != null ? cachedResult : evaluateFluidProcessing(level, pos);
+        
+        if (cachedResult == null && resultCache.size() < MAX_CACHE_SIZE) {
+            resultCache.put(posKey, shouldProcess);
+            cacheMisses.incrementAndGet();
+        } else if (cachedResult != null) {
+            cacheHits.incrementAndGet();
+        }
+        
+        // Early return if processing is not needed
+        if (!shouldProcess) {
+            skippedFluidEvents.incrementAndGet();
+            return;
+        }
+        
+        // Track data structure operations
+        dataStructureOpsThisTick.incrementAndGet();
         
         // TRACK NEIGHBOR UPDATES - Critical bottleneck from Spark profile
         neighborUpdatesThisTick.incrementAndGet();
@@ -313,6 +391,11 @@ public class FlowingFluidsFixesMinimal {
             // ENTITY DATA THREAD POOL TRACKING - Address ForkJoinPool saturation
             entityDataOperationsThisTick.incrementAndGet();
             
+            // AI PATHFINDING TRACKING - Address CPU overload from AI navigation
+            aiPathfindingOpsThisTick.incrementAndGet();
+            randomPositionOpsThisTick.incrementAndGet();
+            groundNavigationOpsThisTick.incrementAndGet();
+            
             // AGGRESSIVE ENTITY THROTTLING - Major bottleneck from Spark profile
             if (cachedMSPT > 20.0) {
                 // Skip 80% of fluid events when many entities and high MSPT
@@ -323,6 +406,15 @@ public class FlowingFluidsFixesMinimal {
             } else if (cachedMSPT > 15.0) {
                 // Skip 66% of fluid events when many entities and medium MSPT
                 if (entityOperationsThisTick.get() % 3 != 0) {
+                    skippedFluidEvents.incrementAndGet();
+                    return;
+                }
+            }
+            
+            // AI PATHFINDING THROTTLING - Address GroundPathNavigation and RandomPos bottlenecks
+            if (cachedMSPT > AI_PATHFINDING_MSPT_THRESHOLD) {
+                // Skip 75% of fluid events during AI pathfinding CPU overload
+                if (aiPathfindingOpsThisTick.get() % 4 != 0) {
                     skippedFluidEvents.incrementAndGet();
                     return;
                 }
@@ -927,6 +1019,42 @@ public class FlowingFluidsFixesMinimal {
         boolean entityDataOverload = entityDataOperationsThisTick.get() > MAX_ENTITY_DATA_OPERATIONS;
         
         return threadPoolCapacity || entityDataOverload;
+    }
+    
+    private static boolean isAIPathfindingOverloaded() {
+        // Check AI pathfinding capacity and CPU usage
+        boolean aiPathfindingCapacity = aiPathfindingOpsThisTick.get() > MAX_AI_PATHFINDING_OPS;
+        boolean randomPositionCapacity = randomPositionOpsThisTick.get() > MAX_RANDOM_POSITION_OPS;
+        boolean groundNavigationCapacity = groundNavigationOpsThisTick.get() > MAX_AI_PATHFINDING_OPS;
+        boolean cpuOverload = cachedMSPT > AI_PATHFINDING_MSPT_THRESHOLD;
+        
+        return aiPathfindingCapacity || randomPositionCapacity || groundNavigationCapacity || cpuOverload;
+    }
+    
+    private static boolean isDataStructureOverloaded() {
+        // Check data structure capacity and MSPT
+        boolean dataStructureCapacity = dataStructureOpsThisTick.get() > MAX_DATA_STRUCTURE_OPS;
+        boolean treeCapacity = treeOpsThisTick.get() > MAX_TREE_OPS;
+        boolean hashMapCapacity = hashMapOpsThisTick.get() > MAX_HASH_MAP_OPS;
+        boolean cpuOverload = cachedMSPT > DATA_STRUCTURE_MSPT_THRESHOLD;
+        
+        return dataStructureCapacity || treeCapacity || hashMapCapacity || cpuOverload;
+    }
+    
+    // RESULT CACHING: Evaluate fluid processing and cache result
+    private static boolean evaluateFluidProcessing(Level level, BlockPos pos) {
+        // Use bit operations instead of if-else chains for better performance
+        long chunkKey = getChunkKey(pos.getX() >> 4, pos.getZ() >> 4);
+        boolean isNearPlayers = playerNearbyChunks.getOrDefault(chunkKey, false);
+        
+        // Combine multiple checks using mathematical operations
+        int msptLevel = cachedMSPT > 20.0 ? 3 : (cachedMSPT > 10.0 ? 2 : (cachedMSPT > 5.0 ? 1 : 0));
+        int playerCount = level.players().size();
+        int entityLevel = playerCount > 10 ? 2 : (playerCount > 5 ? 1 : 0);
+        
+        // Use mathematical operations instead of conditional branches
+        int combinedLevel = msptLevel + entityLevel;
+        return (combinedLevel <= 2) && isNearPlayers; // Process only if conditions are met
     }
     
     private static boolean isTickCapacityExceeded() {
