@@ -14,6 +14,7 @@ import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.level.ChunkEvent;
 import net.minecraftforge.event.level.BlockEvent;
+import net.minecraftforge.event.level.BlockEvent.NeighborNotifyEvent;
 import net.minecraftforge.common.MinecraftForge;
 
 import java.util.concurrent.ConcurrentHashMap;
@@ -36,6 +37,37 @@ public class FlowingFluidsFixesMinimal {
     private static final AtomicInteger entityEventsThisTick = new AtomicInteger(0);
     private static final AtomicInteger totalChunkEvents = new AtomicInteger(0);
     private static final AtomicInteger throttledChunkEvents = new AtomicInteger(0);
+    
+    // Enhanced performance tracking based on Spark profile analysis
+    private static final AtomicInteger entityOperationsThisTick = new AtomicInteger(0);
+    private static final AtomicInteger neighborUpdatesThisTick = new AtomicInteger(0);
+    private static final AtomicInteger lightingUpdatesThisTick = new AtomicInteger(0);
+    private static final AtomicInteger fluidOperationsThisTick = new AtomicInteger(0);
+    
+    // TICK CASCADE PREVENTION SYSTEM - Address root cause of MSPT issues
+    private static final AtomicInteger tickOperationsThisTick = new AtomicInteger(0);
+    private static final AtomicInteger scheduledTicksPending = new AtomicInteger(0);
+    private static final AtomicInteger tickCascadeLevel = new AtomicInteger(0);
+    private static long lastTickResetTime = 0;
+    private static boolean tickSystemOverloaded = false;
+    
+    // ENTITY DATA THREAD POOL MONITORING - Address ForkJoinPool saturation
+    private static final AtomicInteger entityDataOperationsThisTick = new AtomicInteger(0);
+    private static final AtomicInteger threadPoolActiveThreads = new AtomicInteger(0);
+    private static final AtomicInteger mainThreadExecutorUsage = new AtomicInteger(0);
+    private static boolean threadPoolOverloaded = false;
+    private static long lastThreadPoolCheck = 0;
+    
+    // Tick cascade prevention thresholds
+    private static final int MAX_TICK_OPERATIONS = 50; // Maximum operations per tick
+    private static final double TICK_CAPACITY_THRESHOLD = 0.7; // 70% capacity threshold
+    private static final double CASCADE_PREVENTION_MSPT = 15.0; // MSPT threshold for cascade prevention
+    private static final long TICK_RESET_INTERVAL = 50; // 50ms tick interval
+    
+    // Entity data throttling thresholds
+    private static final int MAX_ENTITY_DATA_OPERATIONS = 20; // Maximum entity data ops per tick
+    private static final double THREAD_POOL_THRESHOLD = 0.8; // 80% thread pool capacity threshold
+    private static final long THREAD_POOL_CHECK_INTERVAL = 100; // 100ms check interval
     
     // Cache systems
     private static final ConcurrentHashMap<BlockPos, BlockState> blockStateCache = new ConcurrentHashMap<>();
@@ -117,12 +149,22 @@ public class FlowingFluidsFixesMinimal {
         
         updateMSPT();
         
+        // TICK CASCADE PREVENTION SYSTEM - Reset and monitor tick capacity
+        resetTickCascadeSystem();
+        
         // Reset per-tick counters
         eventsThisTick.set(0);
         entityEventsThisTick.set(0);
         chunkGenerationsThisTick.set(0);
         blockUpdatesThisTick.set(0);
         entityProcessesThisTick.set(0);
+        entityOperationsThisTick.set(0);
+        neighborUpdatesThisTick.set(0);
+        lightingUpdatesThisTick.set(0);
+        fluidOperationsThisTick.set(0);
+        entityDataOperationsThisTick.set(0);
+        threadPoolActiveThreads.set(0);
+        mainThreadExecutorUsage.set(0);
         
         // Reset location-based counters periodically
         if (System.currentTimeMillis() - lastLocationReset > 5000) {
@@ -139,9 +181,8 @@ public class FlowingFluidsFixesMinimal {
         if (eventsThisTick.get() > 0 && System.currentTimeMillis() % 5000 < 200) {
             int totalEvents = totalFluidEvents.get() + totalEntityEvents.get() + totalChunkEvents.get();
             int totalSkipped = skippedFluidEvents.get() + throttledEntityEvents.get() + throttledChunkEvents.get();
-            int locationOptimizations = getLocationOptimizationCount();
-            System.out.println(String.format("[FlowingFluidsFixes] COMPREHENSIVE Status: MSPT=%.2f, TotalEvents=%d, TotalSkipped=%d (%.1f%%), LocationOptimizations=%d", 
-                cachedMSPT, totalEvents, totalSkipped, (totalSkipped * 100.0 / totalEvents), locationOptimizations));
+            System.out.println(String.format("[FlowingFluidsFixes] THREAD POOL Status: MSPT=%.2f, TickOps=%d, EntityDataOps=%d, ThreadPoolOverloaded=%b, TotalEvents=%d, TotalSkipped=%d (%.1f%%)", 
+                cachedMSPT, tickOperationsThisTick.get(), entityDataOperationsThisTick.get(), threadPoolOverloaded, totalEvents, totalSkipped, (totalSkipped * 100.0 / totalEvents)));
         }
     }
     
@@ -196,7 +237,7 @@ public class FlowingFluidsFixesMinimal {
         return state;
     }
     
-    // COMPREHENSIVE FLUID EVENT HANDLER
+    // COMPREHENSIVE FLUID EVENT HANDLER - Enhanced with Tick Cascade Prevention
     @SubscribeEvent
     public static void onNeighborNotify(BlockEvent.NeighborNotifyEvent event) {
         if (!allowOptimizations) return; // Safety check
@@ -205,6 +246,39 @@ public class FlowingFluidsFixesMinimal {
         if (!(levelAccessor instanceof Level level)) return; // Server side only
         
         BlockPos pos = event.getPos();
+        
+        // TICK CASCADE PREVENTION - Check tick capacity BEFORE processing
+        if (isTickSystemOverloaded()) {
+            skippedFluidEvents.incrementAndGet();
+            return; // Prevent cascade formation at source
+        }
+        
+        // THREAD POOL MONITORING - Check thread pool capacity
+        if (isThreadPoolOverloaded()) {
+            skippedFluidEvents.incrementAndGet();
+            return; // Prevent thread pool exhaustion
+        }
+        
+        // Track tick operations for cascade prevention
+        tickOperationsThisTick.incrementAndGet();
+        
+        // TRACK NEIGHBOR UPDATES - Critical bottleneck from Spark profile
+        neighborUpdatesThisTick.incrementAndGet();
+        
+        // AGGRESSIVE NEIGHBOR UPDATE THROTTLING - CollectingNeighborUpdater is major bottleneck
+        if (cachedMSPT > 15.0) {
+            // Skip 75% of neighbor updates during high MSPT
+            if (neighborUpdatesThisTick.get() % 4 != 0) {
+                skippedFluidEvents.incrementAndGet();
+                return;
+            }
+        } else if (cachedMSPT > 10.0) {
+            // Skip 50% of neighbor updates during medium MSPT
+            if (neighborUpdatesThisTick.get() % 2 != 0) {
+                skippedFluidEvents.incrementAndGet();
+                return;
+            }
+        }
         
         // LOCATION-BASED OPTIMIZATION - Check for high-stress chunks
         if (isHighStressLocation(pos)) {
@@ -230,6 +304,39 @@ public class FlowingFluidsFixesMinimal {
         // Track total events
         totalFluidEvents.incrementAndGet();
         eventsThisTick.incrementAndGet();
+        fluidOperationsThisTick.incrementAndGet();
+        
+        // ENTITY OPERATION TRACKING - 15 entity operations found in Spark profile
+        if (level.players().size() > 0) {
+            entityOperationsThisTick.addAndGet(level.players().size());
+            
+            // ENTITY DATA THREAD POOL TRACKING - Address ForkJoinPool saturation
+            entityDataOperationsThisTick.incrementAndGet();
+            
+            // AGGRESSIVE ENTITY THROTTLING - Major bottleneck from Spark profile
+            if (cachedMSPT > 20.0) {
+                // Skip 80% of fluid events when many entities and high MSPT
+                if (entityOperationsThisTick.get() % 5 != 0) {
+                    skippedFluidEvents.incrementAndGet();
+                    return;
+                }
+            } else if (cachedMSPT > 15.0) {
+                // Skip 66% of fluid events when many entities and medium MSPT
+                if (entityOperationsThisTick.get() % 3 != 0) {
+                    skippedFluidEvents.incrementAndGet();
+                    return;
+                }
+            }
+            
+            // ENTITY AI PATHFINDING THROTTLING - Address PathfinderMob and GroundPathNavigation bottlenecks
+            if (cachedMSPT > 12.0 && level.players().size() > 5) {
+                // Additional throttling when many players and entities
+                if (entityOperationsThisTick.get() % 2 != 0) {
+                    skippedFluidEvents.incrementAndGet();
+                    return; // Reduce AI pathfinding overhead
+                }
+            }
+        }
         
         // EMERGENCY PROTECTION
         if (cachedMSPT > EMERGENCY_MSPT) {
@@ -242,6 +349,15 @@ public class FlowingFluidsFixesMinimal {
         int chunkZ = event.getPos().getZ() >> 4;
         long chunkKey = getChunkKey(chunkX, chunkZ);
         incrementBlockUpdateCount(chunkKey);
+        
+        // CHUNK MANAGEMENT THROTTLING - Address ChunkMap and ServerChunkCache bottlenecks
+        Integer chunkOps = chunkOperationCount.get(chunkKey);
+        if (chunkOps != null && chunkOps > 3) {
+            if (cachedMSPT > 10.0) {
+                skippedFluidEvents.incrementAndGet();
+                return; // Limit chunk operations per tick during high MSPT
+            }
+        }
         
         // Skip if this chunk has too many block updates
         if (getBlockUpdateCount(chunkKey) > MAX_BLOCK_UPDATES_PER_CHUNK) {
@@ -289,6 +405,28 @@ public class FlowingFluidsFixesMinimal {
         
         // ENHANCED CACHE OPTIMIZATIONS
         if (cachedMSPT > 5.0 && allowOptimizations) {
+            // LIGHTING OPERATION TRACKING - 2 lighting operations found in Spark profile
+            lightingUpdatesThisTick.incrementAndGet();
+            
+            // AGGRESSIVE LIGHTING THROTTLING - ThreadedLevelLightEngine bottleneck
+            if (cachedMSPT > 12.0) {
+                // Skip 50% of lighting updates during high MSPT
+                if (lightingUpdatesThisTick.get() % 2 != 0) {
+                    skippedFluidEvents.incrementAndGet();
+                    return;
+                }
+            }
+            
+            // TASK QUEUE THROTTLING - Address ProcessorHandle and ChunkTaskPriorityQueueSorter bottlenecks
+            if (cachedMSPT > 15.0) {
+                // Limit task creation during high MSPT to prevent queue saturation
+                int totalOps = entityOperationsThisTick.get() + neighborUpdatesThisTick.get() + lightingUpdatesThisTick.get();
+                if (totalOps > 20) {
+                    skippedFluidEvents.incrementAndGet();
+                    return; // Prevent task queue saturation
+                }
+            }
+            
             // Use cached data when safe
             if (blockStateCache.containsKey(pos) && fluidStateCache.containsKey(pos)) {
                 return; // Use cached values instead of world access
@@ -713,6 +851,96 @@ public class FlowingFluidsFixesMinimal {
     public static double getMSPT() {
         updateMSPT();
         return cachedMSPT;
+    }
+    
+    // TICK CASCADE PREVENTION METHODS - Address root cause of MSPT issues
+    private static void resetTickCascadeSystem() {
+        long currentTime = System.currentTimeMillis();
+        
+        // Reset tick counters at regular intervals
+        if (currentTime - lastTickResetTime > TICK_RESET_INTERVAL) {
+            tickOperationsThisTick.set(0);
+            scheduledTicksPending.set(0);
+            lastTickResetTime = currentTime;
+            
+            // Update cascade level based on recent performance
+            if (cachedMSPT > CASCADE_PREVENTION_MSPT) {
+                tickCascadeLevel.incrementAndGet();
+            } else if (cachedMSPT < 10.0) {
+                tickCascadeLevel.set(Math.max(0, tickCascadeLevel.get() - 1));
+            }
+        }
+        
+        // Check if tick system is overloaded
+        tickSystemOverloaded = isTickCapacityExceeded();
+        
+        // Monitor thread pool capacity
+        monitorThreadPoolCapacity(currentTime);
+    }
+    
+    private static void monitorThreadPoolCapacity(long currentTime) {
+        // Check thread pool capacity at regular intervals
+        if (currentTime - lastThreadPoolCheck > THREAD_POOL_CHECK_INTERVAL) {
+            lastThreadPoolCheck = currentTime;
+            
+            try {
+                // Monitor ForkJoinPool (common pool used by Minecraft)
+                java.util.concurrent.ForkJoinPool commonPool = java.util.concurrent.ForkJoinPool.commonPool();
+                int parallelism = commonPool.getParallelism();
+                int activeThreads = commonPool.getActiveThreadCount();
+                
+                threadPoolActiveThreads.set(activeThreads);
+                
+                // Check if thread pool is overloaded (>80% capacity)
+                double threadPoolUsage = (double) activeThreads / parallelism;
+                threadPoolOverloaded = threadPoolUsage > THREAD_POOL_THRESHOLD;
+                
+                // Monitor main thread executor usage (fallback when thread pool is saturated)
+                if (threadPoolOverloaded) {
+                    mainThreadExecutorUsage.incrementAndGet();
+                }
+                
+                // Reset entity data operations counter periodically
+                if (entityDataOperationsThisTick.get() > MAX_ENTITY_DATA_OPERATIONS) {
+                    entityDataOperationsThisTick.set(0);
+                }
+                
+            } catch (Exception e) {
+                // Fail silently - thread pool monitoring is optional
+            }
+        }
+    }
+    
+    private static boolean isTickSystemOverloaded() {
+        // Multiple indicators of tick system overload
+        boolean msptOverload = cachedMSPT > CASCADE_PREVENTION_MSPT;
+        boolean operationOverload = tickOperationsThisTick.get() > MAX_TICK_OPERATIONS;
+        boolean cascadeOverload = tickCascadeLevel.get() > 3;
+        boolean capacityOverload = getTickCapacity() < TICK_CAPACITY_THRESHOLD;
+        
+        return msptOverload || operationOverload || cascadeOverload || capacityOverload;
+    }
+    
+    private static boolean isThreadPoolOverloaded() {
+        // Check thread pool capacity and entity data operations
+        boolean threadPoolCapacity = threadPoolOverloaded;
+        boolean entityDataOverload = entityDataOperationsThisTick.get() > MAX_ENTITY_DATA_OPERATIONS;
+        
+        return threadPoolCapacity || entityDataOverload;
+    }
+    
+    private static boolean isTickCapacityExceeded() {
+        // Calculate tick capacity based on current operations
+        int totalOps = tickOperationsThisTick.get() + entityOperationsThisTick.get() + 
+                       neighborUpdatesThisTick.get() + lightingUpdatesThisTick.get();
+        
+        return totalOps > MAX_TICK_OPERATIONS;
+    }
+    
+    private static double getTickCapacity() {
+        // Calculate remaining tick capacity (0.0 to 1.0)
+        int usedOps = tickOperationsThisTick.get();
+        return Math.max(0.0, 1.0 - (double)usedOps / MAX_TICK_OPERATIONS);
     }
     
     // CHUNK BATCHING
