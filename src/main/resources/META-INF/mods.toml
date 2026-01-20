@@ -4,30 +4,17 @@ license="All Rights Reserved"
 
 [[mods]]
 modId="flowingfluidsfixes"
-version="1.0.6"
-displayName="FlowingFluidsFixes1.0"
+version="${version}"
+displayName="FlowingFluidsFixesMinimal"
 credits="Thanks to Traben for Flowing Fluids"
 authors="FlowingFluidsFixes"
-description='''Comprehensive performance optimization for Flowing Fluids mod with 15-layer caching system.
-Addresses all identified bottlenecks from Spark profile analysis:
-- World operations: 70% reduction
-- Level operations: 60% reduction  
-- Entity operations: 50% reduction
-- FluidState operations: 60-70% reduction
-- Thread operations: 50-60% reduction
-- Container operations: 50-60% reduction
-- ServerLevel operations: 50-60% reduction
-- Comparator operations: 40-50% reduction
-- AI Goal operations: 40-50% reduction
-- Overall improvement: 80-85%
-
-Features:
-- Multi-layer TTL-based caching system
-- MSPT-activated optimization
-- Automatic cache cleanup
-- Thread-safe concurrent operations
-- Progressive filtering based on server load
-- Comprehensive bottleneck targeting'''
+description='''Minimal performance optimization for Flowing Fluids mod.
+Essential throttling only to reduce overhead:
+- Simple MSPT-based operation limiting
+- Conservative thresholds to avoid addon overhead
+- No complex caching or tracking systems
+- Minimal memory footprint
+- Direct performance improvement without side effects'''
 
 [[dependencies.flowingfluidsfixes]]
 modId="forge"
@@ -43,9 +30,10 @@ versionRange="[1.20.1]"
 ordering="NONE"
 side="BOTH"
 
-[[dependencies.flowingfluidsfixes]]
-modId="flowing_fluids"
-mandatory=true
-versionRange="[0.6.1,)"
-ordering="AFTER"
-side="BOTH"
+# Temporarily removed Flowing Fluids dependency for testing
+# [[dependencies.flowingfluidsfixes]]
+# modId="flowing_fluids"
+# mandatory=true
+# versionRange="[0.6.1,)"
+# ordering="AFTER"
+# side="BOTH"

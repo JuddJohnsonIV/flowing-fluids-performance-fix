@@ -2,7 +2,6 @@ Java Launcher: C:\Program Files\Java\jdk-17\bin\java.exe
 Arguments: '--in-jar, C:\Users\jwema\CascadeProjects\FlowingFluidsStandalone\build\libs\flowingfluidsfixes-1.0.13.jar, --out-jar, C:\Users\jwema\CascadeProjects\FlowingFluidsStandalone\build\reobfJar\output.jar, --srg-in, C:\Users\jwema\CascadeProjects\FlowingFluidsStandalone\build\createMcpToSrg\output.tsrg, --live'
 Classpath:
  - C:\Users\jwema\scoop\apps\gradle\current\.gradle\caches\forge_gradle\maven_downloader\net\md-5\SpecialSource\1.11.0\SpecialSource-1.11.0-shaded.jar
- - C:\Users\jwema\CascadeProjects\flowing_fluids\common\build\libs\flowing_fluids.jar
  - C:\Users\jwema\scoop\apps\gradle\current\.gradle\caches\forge_gradle\minecraft_user_repo\net\minecraftforge\forge\1.20.1-47.4.13_mapped_official_1.20.1\forge-1.20.1-47.4.13_mapped_official_1.20.1.jar
  - C:\Users\jwema\scoop\apps\gradle\current\.gradle\caches\modules-2\files-2.1\org.spongepowered\mixin\0.8.5\9d1c0c3a304ae6697ecd477218fa61b850bf57fc\mixin-0.8.5.jar
  - C:\Users\jwema\scoop\apps\gradle\current\.gradle\caches\forge_gradle\minecraft_repo\versions\1.20.1\client-extra.jar

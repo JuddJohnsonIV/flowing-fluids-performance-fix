@@ -5,7 +5,6 @@ Specification-Version: 1
 Implementation-Title: PerformanceFix
 Implementation-Version: 1.0.13
 Implementation-Vendor: FlowingFluidsFixes
-Implementation-Timestamp: 2026-01-16T14:43:05-0800
-MixinConfigs: flowingfluidsfixes.mixins.json
+Implementation-Timestamp: 2026-01-19T23:28:25-0800
 FMLCorePluginContainsFMLMod: true
 
