@@ -88,7 +88,6 @@ public class FlowingFluidsFixesMinimal {
     
     // COMPREHENSIVE PERFORMANCE METRICS - Enhanced MSPT monitoring
     private static final AtomicInteger totalOptimizationsApplied = new AtomicInteger(0);
-    private static final AtomicInteger optimizationsSkipped = new AtomicInteger(0);
     private static final AtomicInteger performanceChecks = new AtomicInteger(0);
     
     // MSPT monitoring data
@@ -126,7 +125,6 @@ public class FlowingFluidsFixesMinimal {
     // World change tracking
     private static final Set<BlockPos> recentExplosions = ConcurrentHashMap.newKeySet();
     private static final Set<BlockPos> recentBlockUpdates = ConcurrentHashMap.newKeySet();
-    private static final long WORLD_CHANGE_TRACKING_DURATION = 10000; // 10 seconds
     
     // FLUID STATE CACHING - Avoid expensive LevelChunk/PalettedContainer operations
     private static final ConcurrentHashMap<BlockPos, BlockState> blockStateCache = new ConcurrentHashMap<>();
@@ -158,18 +156,22 @@ public class FlowingFluidsFixesMinimal {
         MinecraftForge.EVENT_BUS.register(this);
         System.out.println("[FlowingFluidsFixes] GLOBAL SPATIAL OPTIMIZATION system initialized");
     }
-    
-    private void commonSetup(FMLCommonSetupEvent event) {
+
+    private void commonSetup(final FMLCommonSetupEvent event) {
         // Clear all caches to prevent interference
         playerNearbyChunks.clear();
         chunkExpiryTimes.clear();
         blockStateCache.clear();
         fluidStateCache.clear();
         stateCacheExpiryTimes.clear();
+        lastKnownFluidState.clear();
+        fluidChangeTimestamps.clear();
+        worldChangeTimestamps.clear();
+
         spatialOptimizationActive = true;
         System.out.println("[FlowingFluidsFixes] All optimization systems enabled - fluid state caching active");
     }
-    
+
     @SubscribeEvent
     public void onServerTick(TickEvent.ServerTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
@@ -596,7 +598,9 @@ public class FlowingFluidsFixesMinimal {
     
     // OPERATION THROTTLING - Adaptive per-tick limits based on MSPT
     public static boolean shouldAllowOperation() {
-        if (!spatialOptimizationActive) return true;
+        if (!spatialOptimizationActive) {
+            return true;
+        }
         
         // Track operation
         operationsThisTick.incrementAndGet();
@@ -926,6 +930,16 @@ public class FlowingFluidsFixesMinimal {
         FluidState currentFluid = level.getBlockState(pos).getFluidState();
         FluidState lastKnown = lastKnownFluidState.get(pos);
         
+        // Check if fluid is stable (no recent changes)
+        Long lastChangeTime = fluidChangeTimestamps.get(pos);
+        if (lastChangeTime != null && (System.currentTimeMillis() - lastChangeTime) < FLUID_CHANGE_TIMEOUT) {
+            // Fluid changed recently - use current state
+            if (lastKnown != null && currentFluid.equals(lastKnown)) {
+                unchangedFluidSkips.incrementAndGet();
+                return currentFluid;
+            }
+        }
+        
         if (lastKnown != null && currentFluid.equals(lastKnown)) {
             // Fluid state unchanged - skip processing
             unchangedFluidSkips.incrementAndGet();
@@ -1072,7 +1086,7 @@ public class FlowingFluidsFixesMinimal {
     // CACHE INVALIDATION SYSTEM - Clean up old world change tracking
     private static void cleanupOldWorldChanges() {
         long currentTime = System.currentTimeMillis();
-        long cutoffTime = currentTime - WORLD_CHANGE_TRACKING_DURATION;
+        long cutoffTime = currentTime - WORLD_CHANGE_CACHE_DURATION;
         
         // Clean up old explosion tracking
         recentExplosions.removeIf(pos -> {
