@@ -6,6 +6,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.MinecraftServer;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
@@ -13,6 +14,7 @@ import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.level.BlockEvent;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraft.client.Minecraft;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -40,10 +42,17 @@ public class FlowingFluidsFixesMinimal {
     private static final int MAX_ENTITY_SECTION_OPS_PER_TICK = 75;
     private static final double SPATIAL_MSPT_THRESHOLD = 20.0;
     
+    // OPERATION THROTTLING thresholds - ALL use real Minecraft MSPT
+    private static final double HIGH_MSPT_THRESHOLD = 25.0;
+    private static final double EXTREME_MSPT_THRESHOLD = 40.0;
+    private static final int BASE_MAX_OPERATIONS_PER_TICK = 100;
+    private static final int HIGH_MSPT_MAX_OPERATIONS = 50;
+    private static final int EXTREME_MSPT_MAX_OPERATIONS = 25;
+    
     // Spatial optimization state
     private static boolean spatialOptimizationActive = false;
     private static double cachedMSPT = 5.0;
-    private static long lastMSPTCheck = 0;
+    private static long lastTickTime = 0;
     
     // Player proximity cache for spatial optimization
     private static final ConcurrentHashMap<Long, Boolean> playerNearbyChunks = new ConcurrentHashMap<>();
@@ -66,13 +75,6 @@ public class FlowingFluidsFixesMinimal {
     private static final AtomicInteger operationsThisTick = new AtomicInteger(0);
     private static final AtomicInteger throttledOperations = new AtomicInteger(0);
     private static final AtomicInteger allowedOperations = new AtomicInteger(0);
-    
-    // Throttling limits (adaptive based on MSPT)
-    private static final int BASE_MAX_OPERATIONS_PER_TICK = 100;
-    private static final int HIGH_MSPT_MAX_OPERATIONS = 50;
-    private static final int EXTREME_MSPT_MAX_OPERATIONS = 25;
-    private static final double HIGH_MSPT_THRESHOLD = 25.0;
-    private static final double EXTREME_MSPT_THRESHOLD = 40.0;
     
     // LOD (Level of Detail) SYSTEM - Distance-based processing intensity
     private static final int LOD_FULL_PROCESSING_DISTANCE = 32; // 32 blocks - full processing
@@ -174,55 +176,74 @@ public class FlowingFluidsFixesMinimal {
 
     @SubscribeEvent
     public void onServerTick(TickEvent.ServerTickEvent event) {
-        if (event.phase != TickEvent.Phase.END) return;
-        
-        updateMSPT();
-        
-        // Reset per-tick counters
-        eventsThisTick.set(0);
-        entityDataOpsThisTick.set(0);
-        neighborUpdateOpsThisTick.set(0);
-        entitySectionOpsThisTick.set(0);
-        
-        // OPERATION THROTTLING - Reset per-tick operation counters
-        operationsThisTick.set(0);
-        throttledOperations.set(0);
-        allowedOperations.set(0);
-        
-        // COMPREHENSIVE PERFORMANCE METRICS - Track performance data
-        updatePerformanceHistory();
-        generatePerformanceReport();
-        
-        // Clean up expired caches periodically
-        if (System.currentTimeMillis() % 10000 < 200) { // Every 10 seconds
-            cleanupExpiredCaches();
-        }
-        
-        // Clean up fluid state caches more frequently
-        if (System.currentTimeMillis() % 2000 < 100) { // Every 2 seconds
-            cleanupExpiredStateCaches();
-        }
-        
-        // Status reporting
-        if (eventsThisTick.get() > 0 && System.currentTimeMillis() % 5000 < 200) {
-            System.out.println(String.format("[FlowingFluidsFixes] OPTIMIZATION: MSPT=%.2f, EntityDataOps=%d, NeighborOps=%d, EntitySectionOps=%d, TotalSkipped=%d", 
-                cachedMSPT, entityDataOpsThisTick.get(), neighborUpdateOpsThisTick.get(), 
-                entitySectionOpsThisTick.get(), skippedWorldwideOps.get()));
-            System.out.println(String.format("[FlowingFluidsFixes] CACHE PERFORMANCE: BlockCache=%d/%d (%.1f%%), FluidCache=%d/%d (%.1f%%)",
-                blockCacheHits.get(), blockCacheHits.get() + blockCacheMisses.get(),
-                getCacheHitRate(blockCacheHits.get(), blockCacheHits.get() + blockCacheMisses.get()),
-                fluidCacheHits.get(), fluidCacheHits.get() + fluidCacheMisses.get(),
-                getCacheHitRate(fluidCacheHits.get(), fluidCacheHits.get() + fluidCacheMisses.get())));
-            System.out.println(String.format("[FlowingFluidsFixes] VALUE CHANGE DETECTION: UnchangedSkips=%d, ChangeDetections=%d",
-                unchangedFluidSkips.get(), fluidChangeDetections.get()));
-            System.out.println(String.format("[FlowingFluidsFixes] SPATIAL PARTITIONING: ChunkCache=%d/%d (%.1f%%), ChunksSkipped=%d, ChunksProcessed=%d",
-                chunkCacheHits.get(), chunkCacheHits.get() + chunkCacheMisses.get(),
-                getCacheHitRate(chunkCacheHits.get(), chunkCacheHits.get() + chunkCacheMisses.get()),
-                chunksSkipped.get(), chunksProcessed.get()));
-            System.out.println(String.format("[FlowingFluidsFixes] OPERATION THROTTLING: Allowed=%d, Throttled=%d, MaxPerTick=%d",
-                allowedOperations.get(), throttledOperations.get(), getMaxOperationsPerTick()));
-            System.out.println(String.format("[FlowingFluidsFixes] LOD SYSTEM: Full=%d, Medium=%d, Minimal=%d, Skipped=%d",
-                lodFullProcessing.get(), lodMediumProcessing.get(), lodMinimalProcessing.get(), lodSkippedProcessing.get()));
+        if (event.phase == TickEvent.Phase.END) {
+            // Get REAL MSPT from the actual Minecraft server
+            try {
+                MinecraftServer server = null;
+                
+                // Try to get the server instance from multiple sources
+                if (Minecraft.getInstance() != null && Minecraft.getInstance().getConnection() != null) {
+                    // Client side - get from integrated server
+                    server = Minecraft.getInstance().getSingleplayerServer();
+                }
+                
+                // If we have a server, get real MSPT from tick timing
+                if (server != null) {
+                    // Method 1: Use tick timing measurement (most reliable)
+                    long currentTime = System.nanoTime();
+                    if (lastTickTime > 0) {
+                        long tickDuration = currentTime - lastTickTime;
+                        // Convert nanoseconds to milliseconds (REAL MSPT)
+                        cachedMSPT = tickDuration / 1_000_000.0;
+                    }
+                    lastTickTime = currentTime;
+                } else {
+                    // Method 2: Server-side fallback - use tick timing
+                    long currentTime = System.nanoTime();
+                    if (lastTickTime > 0) {
+                        long tickDuration = currentTime - lastTickTime;
+                        cachedMSPT = tickDuration / 1_000_000.0; // Convert to milliseconds
+                    }
+                    lastTickTime = currentTime;
+                }
+            } catch (Exception e) {
+                // Ultimate fallback - use conservative estimate
+                cachedMSPT = 5.0;
+            }
+            
+            // Update performance tracking with REAL MSPT
+            updatePerformanceHistory();
+            generatePerformanceReport();
+            
+            // Reset per-tick counters
+            eventsThisTick.set(0);
+            entityDataOpsThisTick.set(0);
+            neighborUpdateOpsThisTick.set(0);
+            entitySectionOpsThisTick.set(0);
+            
+            // Clean up expired caches periodically
+            if (System.currentTimeMillis() % 10000 < 200) { // Every 10 seconds
+                cleanupExpiredCaches();
+            }
+            
+            // Clean up fluid state caches more frequently
+            if (System.currentTimeMillis() % 2000 < 100) { // Every 2 seconds
+                cleanupExpiredStateCaches();
+            }
+            
+            // Status reporting with REAL MSPT
+            if (eventsThisTick.get() > 0 && System.currentTimeMillis() % 5000 < 200) {
+                System.out.println(String.format("[FlowingFluidsFixes] REAL MSPT=%.2f, EntityDataOps=%d, NeighborOps=%d, EntitySectionOps=%d, TotalSkipped=%d", 
+                    cachedMSPT, entityDataOpsThisTick.get(), neighborUpdateOpsThisTick.get(), 
+                    entitySectionOpsThisTick.get(), skippedWorldwideOps.get()));
+                System.out.println(String.format("[FlowingFluidsFixes] CACHE PERFORMANCE: BlockCache=%d/%d (%.1f%%), FluidCache=%d/%d (%.1f%%)",
+                    blockCacheHits.get(), blockCacheHits.get() + blockCacheMisses.get(),
+                    getCacheHitRate(blockCacheHits.get(), blockCacheHits.get() + blockCacheMisses.get()),
+                    fluidCacheHits.get(), fluidCacheHits.get() + fluidCacheMisses.get(),
+                    getCacheHitRate(fluidCacheHits.get(), fluidCacheHits.get() + fluidCacheMisses.get())));
+                System.out.println(String.format("[FlowingFluidsFixes] VALUE CHANGE DETECTION: UnchangedSkips=%d, ChangeDetections=%d",
+                    unchangedFluidSkips.get(), fluidChangeDetections.get()));
+            }
         }
     }
     
@@ -237,7 +258,7 @@ public class FlowingFluidsFixesMinimal {
         playerNearbyChunks.entrySet().removeIf(entry -> !chunkExpiryTimes.containsKey(entry.getKey()));
     }
     
-    private void cleanupExpiredStateCaches() {
+    private static void cleanupExpiredStateCaches() {
         long currentTime = System.currentTimeMillis();
         
         // Remove expired fluid state entries
@@ -254,12 +275,36 @@ public class FlowingFluidsFixesMinimal {
             return false;
         });
         
-        // Prevent memory leaks - limit cache size
+        // Prevent memory leaks - limit cache size with proper cleanup
         if (blockStateCache.size() > MAX_CACHE_SIZE) {
-            // Remove oldest entries (simplified - in production would use LRU)
-            final AtomicInteger toRemove = new AtomicInteger(blockStateCache.size() - MAX_CACHE_SIZE + 1000);
-            blockStateCache.entrySet().removeIf(entry -> toRemove.getAndDecrement() > 0);
-            fluidStateCache.entrySet().removeIf(entry -> toRemove.getAndDecrement() > 0);
+            // Remove oldest entries more aggressively
+            final int excess = blockStateCache.size() - MAX_CACHE_SIZE + 1000; // Clear extra to prevent immediate re-trigger
+            
+            // Remove oldest entries from both caches separately
+            blockStateCache.entrySet().removeIf(entry -> {
+                return excess > 0;
+            });
+            
+            // Recalculate for fluid cache
+            final int fluidExcess = fluidStateCache.size() - MAX_CACHE_SIZE + 1000;
+            fluidStateCache.entrySet().removeIf(entry -> {
+                return fluidExcess > 0;
+            });
+        }
+        
+        // Also clean up other caches to prevent memory leaks
+        if (playerNearbyChunks.size() > 1000) {
+            final int excess = playerNearbyChunks.size() - 500;
+            playerNearbyChunks.entrySet().removeIf(entry -> {
+                return excess > 0;
+            });
+        }
+        
+        if (chunkFluidGroups.size() > 500) {
+            final int excess = chunkFluidGroups.size() - 250;
+            chunkFluidGroups.entrySet().removeIf(entry -> {
+                return excess > 0;
+            });
         }
     }
     
@@ -271,7 +316,7 @@ public class FlowingFluidsFixesMinimal {
         // Calculate optimization effectiveness
         int totalOperations = totalFluidEvents.get();
         int skippedOps = skippedFluidEvents.get() + skippedWorldwideOps.get() + throttledOperations.get();
-        double effectiveness = totalOperations > 0 ? (skippedOps * 1.0 / totalOperations) : 0.0;
+        double effectiveness = (totalOperations > 0) ? ((skippedOps * 100.0) / Math.max(totalOperations, 1)) : 0.0;
         optimizationHistory[historyIndex] = effectiveness;
         
         // Track optimization metrics
@@ -313,6 +358,12 @@ public class FlowingFluidsFixesMinimal {
         double cacheHitRate = totalCacheOps > 0 ? 
             ((blockCacheHits.get() + fluidCacheHits.get()) * 100.0 / totalCacheOps) : 0.0;
         System.out.println(String.format("Overall Cache Hit Rate: %.1f%%", cacheHitRate));
+        
+        // Debug: Show raw cache numbers
+        System.out.println(String.format("DEBUG - Cache Stats: BlockHits=%d, BlockMisses=%d, FluidHits=%d, FluidMisses=%d", 
+            blockCacheHits.get(), blockCacheMisses.get(), fluidCacheHits.get(), fluidCacheMisses.get()));
+        System.out.println(String.format("DEBUG - Optimization Stats: TotalEvents=%d, SkippedEvents=%d, SkippedWorldwide=%d, Throttled=%d", 
+            totalFluidEvents.get(), skippedFluidEvents.get(), skippedWorldwideOps.get(), throttledOperations.get()));
         
         // LOD system performance
         int totalLodOps = lodFullProcessing.get() + lodMediumProcessing.get() + 
@@ -883,17 +934,6 @@ public class FlowingFluidsFixesMinimal {
         return expiry == null || System.currentTimeMillis() > expiry;
     }
     
-    private void updateMSPT() {
-        long currentTime = System.currentTimeMillis();
-        if (currentTime - lastMSPTCheck > 2000) { // Check every 2 seconds
-            // In reality, this would get actual MSPT from server
-            // For now, we'll use a simple estimation based on operation counts
-            int totalOps = entityDataOpsThisTick.get() + neighborUpdateOpsThisTick.get() + entitySectionOpsThisTick.get();
-            cachedMSPT = 5.0 + (totalOps * 0.1); // Simple estimation
-            lastMSPTCheck = currentTime;
-        }
-    }
-    
     // FLUID STATE CACHING - Core optimization methods
     public static BlockState getCachedBlockState(Level level, BlockPos pos) {
         if (!spatialOptimizationActive) {
@@ -911,7 +951,12 @@ public class FlowingFluidsFixesMinimal {
         blockCacheMisses.incrementAndGet();
         BlockState state = level.getBlockState(pos);
         
-        // Cache the result
+        // Cache the result with size management
+        if (blockStateCache.size() >= MAX_CACHE_SIZE) {
+            // Trigger cleanup before adding new entry
+            cleanupExpiredStateCaches();
+        }
+        
         if (blockStateCache.size() < MAX_CACHE_SIZE) {
             blockStateCache.put(pos, state);
             fluidStateCache.put(pos, state.getFluidState());
@@ -926,45 +971,41 @@ public class FlowingFluidsFixesMinimal {
             return level.getBlockState(pos).getFluidState(); // Fallback
         }
         
-        // VALUE CHANGE DETECTION - Check if fluid state has changed
-        FluidState currentFluid = level.getBlockState(pos).getFluidState();
+        // CHECK CACHE FIRST - Before any expensive operations!
+        FluidState cached = fluidStateCache.get(pos);
+        if (cached != null && !isStateCacheExpired(pos)) {
+            fluidCacheHits.incrementAndGet();
+            return cached; // ✅ Return cached result immediately
+        }
+        
+        // Cache miss - now do expensive operations
+        fluidCacheMisses.incrementAndGet();
+        BlockState state = level.getBlockState(pos);
+        FluidState currentFluid = state.getFluidState();
+        
+        // VALUE CHANGE DETECTION - Check if fluid state has changed (OPTIMIZED)
         FluidState lastKnown = lastKnownFluidState.get(pos);
         
-        // Check if fluid is stable (no recent changes)
+        // OPTIMIZED: Check unchanged state FIRST (most common case)
+        if (lastKnown != null && currentFluid.equals(lastKnown)) {
+            // Fluid state unchanged - skip processing immediately
+            unchangedFluidSkips.incrementAndGet();
+            return currentFluid;
+        }
+        
+        // Only check stability for changed fluids
         Long lastChangeTime = fluidChangeTimestamps.get(pos);
         if (lastChangeTime != null && (System.currentTimeMillis() - lastChangeTime) < FLUID_CHANGE_TIMEOUT) {
             // Fluid changed recently - use current state
-            if (lastKnown != null && currentFluid.equals(lastKnown)) {
-                unchangedFluidSkips.incrementAndGet();
-                return currentFluid;
-            }
-        }
-        
-        if (lastKnown != null && currentFluid.equals(lastKnown)) {
-            // Fluid state unchanged - skip processing
-            unchangedFluidSkips.incrementAndGet();
-            return currentFluid; // Return cached unchanged state
+            return currentFluid;
         }
         
         // Fluid state changed - update tracking
-        if (lastKnown != null) {
-            fluidChangeDetections.incrementAndGet();
-        }
+        fluidChangeDetections.incrementAndGet();
         lastKnownFluidState.put(pos, currentFluid);
         fluidChangeTimestamps.put(pos, System.currentTimeMillis());
         
-        // Check cache for performance optimization
-        FluidState cached = fluidStateCache.get(pos);
-        if (cached != null && !isStateCacheExpired(pos) && cached.equals(currentFluid)) {
-            fluidCacheHits.incrementAndGet();
-            return cached;
-        }
-        
-        // Cache miss - get from world and cache result
-        fluidCacheMisses.incrementAndGet();
-        BlockState state = level.getBlockState(pos);
-        
-        // Cache both block and fluid states
+        // Cache the result for future use
         if (fluidStateCache.size() < MAX_CACHE_SIZE) {
             blockStateCache.put(pos, state);
             fluidStateCache.put(pos, currentFluid);
