@@ -996,8 +996,10 @@ public class FlowingFluidsFixesMinimal {
             scalingFactor = 0.5 - ((msptAboveThreshold - 10.0) * 0.05); // 5% reduction per ms
         } else if (msptAboveThreshold <= 20.0) { // 30-35ms: Heavy scaling
             scalingFactor = 0.25 - ((msptAboveThreshold - 15.0) * 0.03); // 3% reduction per ms
-        } else {                                 // 35ms+: Very heavy scaling
+        } else if (msptAboveThreshold <= 50.0) { // 35-55ms: Very heavy scaling
             scalingFactor = Math.max(0.05, 0.1 - ((msptAboveThreshold - 20.0) * 0.01)); // 1% reduction per ms, min 5%
+        } else {                                 // 55ms+: Ultra heavy scaling for extreme lag
+            scalingFactor = Math.max(0.01, 0.05 - ((msptAboveThreshold - 50.0) * 0.001)); // 0.1% reduction per ms, min 1%
         }
         
         // Apply smooth scaling with random distribution
@@ -1007,6 +1009,9 @@ public class FlowingFluidsFixesMinimal {
     // EVENT PREVENTION: Check if we should allow fluid processing at this position
     public static boolean shouldAllowFluidProcessingAt(ServerLevel level, BlockPos pos) {
         boolean shouldAllow = true;
+        
+        // ALWAYS COUNT TOTAL EVENTS for proper effectiveness calculation
+        totalFluidEvents.incrementAndGet();
         
         if (!shouldAllowFluidUpdates(level)) {
             shouldAllow = false; // Global throttling active
