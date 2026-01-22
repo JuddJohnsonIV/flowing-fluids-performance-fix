@@ -472,6 +472,32 @@ public class FlowingFluidsFixesMinimal {
         }
     }
     
+    // SAFE ISLOADED METHOD - Handle obfuscated isLoaded method
+    private static boolean safeIsLoaded(Level level, BlockPos pos) {
+        try {
+            return level.isLoaded(pos); // Try direct method first
+        } catch (NoSuchMethodError e) {
+            // Fallback: Use reflection to call isLoaded method
+            try {
+                java.lang.reflect.Method isLoadedMethod = Level.class.getMethod("isLoaded", BlockPos.class);
+                return (Boolean) isLoadedMethod.invoke(level, pos);
+            } catch (Exception ex) {
+                // Ultimate fallback: Check if chunk exists (less safe but prevents crash)
+                try {
+                    // Try to get chunk at position
+                    int chunkX = getBlockPosX(pos) >> 4;
+                    int chunkZ = getBlockPosZ(pos) >> 4;
+                    java.lang.reflect.Method getChunkMethod = Level.class.getMethod("getChunk", int.class, int.class);
+                    Object chunk = getChunkMethod.invoke(level, chunkX, chunkZ);
+                    return chunk != null;
+                } catch (Exception chunkEx) {
+                    // Last resort - assume loaded to prevent crashes
+                    return true;
+                }
+            }
+        }
+    }
+    
     // BITSET OPTIMIZATION - Compact boolean storage (87% memory reduction)
     private static final BitSet fluidProcessingFlags = new BitSet(1000); // Track processing state
     private static final BitSet chunkProcessingFlags = new BitSet(1000); // Track chunk processing
@@ -991,7 +1017,7 @@ public class FlowingFluidsFixesMinimal {
                 for (int y = 0; y < 256; y++) { // Scan full height
                     BlockPos pos = new BlockPos(baseX + x, y, baseZ + z);
                     
-                    if (!level.isLoaded(pos)) continue;
+                    if (!safeIsLoaded(level, pos)) continue;
                     
                     BlockState state = level.getBlockState(pos);
                     FluidState fluid = state.getFluidState();
@@ -1020,7 +1046,7 @@ public class FlowingFluidsFixesMinimal {
         
         // Check if fluid has space to flow
         BlockPos belowPos = pos.below();
-        if (level.isLoaded(belowPos)) {
+        if (safeIsLoaded(level, belowPos)) {
             FluidState belowFluid = level.getFluidState(belowPos);
             if (belowFluid.isEmpty() || belowFluid.getAmount() < fluid.getAmount()) {
                 return true; // Can flow down
@@ -1030,7 +1056,7 @@ public class FlowingFluidsFixesMinimal {
         // Check if fluid can flow horizontally
         BlockPos[] adjacent = {pos.north(), pos.south(), pos.east(), pos.west()};
         for (BlockPos adjPos : adjacent) {
-            if (!level.isLoaded(adjPos)) continue;
+            if (!safeIsLoaded(level, adjPos)) continue;
             
             FluidState adjFluid = level.getFluidState(adjPos);
             if (adjFluid.isEmpty() || adjFluid.getAmount() < fluid.getAmount()) {
@@ -1616,7 +1642,7 @@ public class FlowingFluidsFixesMinimal {
             for (int y = -radius; y <= radius; y++) {
                 for (int z = -radius; z <= radius; z++) {
                     BlockPos checkPos = center.offset(x, y, z);
-                    if (level.isLoaded(checkPos)) {
+                    if (safeIsLoaded(level, checkPos)) {
                         FluidState fluid = level.getFluidState(checkPos);
                         if (!fluid.isEmpty()) {
                             count++;
@@ -2483,7 +2509,7 @@ public class FlowingFluidsFixesMinimal {
             shouldAllow = false; // Freeze deep fluids far from ocean holes
             frozenDeepFluids.incrementAndGet();
             // Replace with stone to prevent future calculations
-            if (level.isLoaded(pos)) {
+            if (safeIsLoaded(level, pos)) {
                 level.setBlock(pos, Blocks.STONE.defaultBlockState(), 3);
             }
             return shouldAllow;
@@ -2730,7 +2756,7 @@ public class FlowingFluidsFixesMinimal {
         
         int flowingNeighbors = 0;
         for (BlockPos neighbor : adjacent) {
-            if (!level.isLoaded(neighbor)) continue;
+            if (!safeIsLoaded(level, neighbor)) continue;
             
             BlockState neighborState = level.getBlockState(neighbor);
             FluidState neighborFluid = neighborState.getFluidState();
@@ -2821,7 +2847,7 @@ public class FlowingFluidsFixesMinimal {
         
         for (int i = 0; i < maxChecks; i++) {
             BlockPos belowPos = currentPos.below();
-            if (!level.isLoaded(belowPos)) break;
+            if (!safeIsLoaded(level, belowPos)) break;
             
             BlockState belowState = level.getBlockState(belowPos);
             FluidState belowFluid = belowState.getFluidState();
@@ -2895,7 +2921,7 @@ public class FlowingFluidsFixesMinimal {
         // This avoids expensive LevelChunk/PalettedContainer operations
         
         // For fluid positions, return air to prevent fluid processing
-        if (level.isLoaded(pos)) {
+        if (safeIsLoaded(level, pos)) {
             // Quick check without expensive operations
             return Blocks.AIR.defaultBlockState();
         }
@@ -3214,7 +3240,7 @@ public class FlowingFluidsFixesMinimal {
                     for (int dz = -2; dz <= 2; dz++) {
                         if (dx == 0 && dz == 0) continue;
                         BlockPos checkPos = safeOffset(pos, dx, 0, dz);
-                        if (level.isLoaded(checkPos)) {
+                        if (safeIsLoaded(level, checkPos)) {
                             BlockState checkState = level.getBlockState(checkPos);
                             if (checkState.is(Blocks.WATER)) {
                                 nearbyWaterBlocks++;
