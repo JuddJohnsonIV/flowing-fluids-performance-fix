@@ -303,6 +303,12 @@ public class FlowingFluidsFixesMinimal {
     private static boolean inEmergencyMode = false;
     private static boolean inAggressiveMode = false;
     
+    // EVENT RATE LIMITING - Prevent system overload
+    private static final int MAX_EVENTS_PER_TICK = 100; // Maximum events to process per tick
+    private static final int MAX_EVENTS_PER_SECOND = 1000; // Maximum events per second
+    private static long eventsThisSecond = 0;
+    private static long lastSecondReset = System.currentTimeMillis();
+    
     // GRACEFUL DEGRADATION - Process existing fluids, reject new ones
     private static boolean acceptNewFluids = true; // Controls whether to accept new fluid updates
     
@@ -2840,6 +2846,29 @@ public class FlowingFluidsFixesMinimal {
     }
     @SubscribeEvent
     public void onNeighborNotify(BlockEvent.NeighborNotifyEvent event) {
+        // EVENT RATE LIMITING - Prevent system overload
+        long currentTime = System.currentTimeMillis();
+        
+        // Reset per-second counter
+        if (currentTime - lastSecondReset > 1000) {
+            eventsThisSecond = 0;
+            lastSecondReset = currentTime;
+        }
+        
+        // Check per-second limit
+        if (eventsThisSecond >= MAX_EVENTS_PER_SECOND) {
+            skippedFluidEvents.incrementAndGet();
+            return; // Rate limited - too many events this second
+        }
+        
+        // Check per-tick limit
+        if (eventsThisTick.get() >= MAX_EVENTS_PER_TICK) {
+            skippedFluidEvents.incrementAndGet();
+            return; // Rate limited - too many events this tick
+        }
+        
+        eventsThisSecond++;
+        
         LevelAccessor levelAccessor = event.getLevel();
         if (!(levelAccessor instanceof Level level)) return; // Server side only
         
@@ -2848,6 +2877,13 @@ public class FlowingFluidsFixesMinimal {
         // ALWAYS track fluid events - don't skip just because spatial optimization is disabled
         totalFluidEvents.incrementAndGet();
         eventsThisTick.incrementAndGet();
+        
+        // HIGH MSPT FAST EXIT - Prevent optimization system from making lag worse
+        if (cachedMSPT > 100.0) { // Critical MSPT threshold
+            // Skip ALL optimizations during extreme lag - just count and exit
+            skippedFluidEvents.incrementAndGet();
+            return; // Fast exit to prevent making lag worse
+        }
         
         // SPATIAL PARTITIONING - Only apply if active
         if (spatialOptimizationActive && !shouldProcessFluidInChunk(pos)) {
