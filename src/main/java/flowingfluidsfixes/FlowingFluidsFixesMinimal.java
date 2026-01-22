@@ -320,8 +320,11 @@ public class FlowingFluidsFixesMinimal {
     
     // FLUID PAUSE SYSTEM - Individual fluid blocks wait for timeout
     private static final ConcurrentHashMap<BlockPos, Long> pausedFluids = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<BlockPos, Long> fluidCooldowns = new ConcurrentHashMap<>(); // NEW: Cooldown tracking
     private static final long FLUID_PAUSE_DURATION = 5000; // 5 seconds pause for individual fluids
+    private static final long FLUID_COOLDOWN_DURATION = 3000; // 3 seconds cooldown before retry
     private static final int MAX_PAUSED_FLUIDS = 5000; // REDUCED from 10000 to prevent memory issues
+    private static final int MAX_COOLDOWN_FLUIDS = 10000; // Maximum cooldowns to track
     private static long lastPauseCleanup = System.currentTimeMillis();
     private static final long PAUSE_CLEANUP_INTERVAL = 30000; // Clean up every 30 seconds
     
@@ -644,6 +647,7 @@ public class FlowingFluidsFixesMinimal {
             // FLUID PAUSE CLEANUP - Remove expired paused fluids
             if (currentTime - lastPauseCleanup > PAUSE_CLEANUP_INTERVAL) {
                 cleanupExpiredPausedFluids();
+                cleanupExpiredCooldowns(); // NEW: Clean up expired cooldowns
                 
                 // CIRCULAR BUFFER CLEANUP - Process queued fluids
                 processQueuedFluids();
@@ -3025,37 +3029,69 @@ public class FlowingFluidsFixesMinimal {
         totalFluidEvents.incrementAndGet();
         eventsThisTick.incrementAndGet();
         
-        // LAZY EVALUATION - Only compute expensive values when needed
+        // LAZY EVALUATION - Only evaluate expensive processing when needed
         Supplier<Boolean> shouldProcess = () -> {
             // HIGH MSPT FAST EXIT - Prevent optimization system from making lag worse
             if (cachedMSPT > 100.0) { // Critical MSPT threshold
                 return false; // Fast exit to prevent making lag worse
             }
             
-            // SIMPLIFIED FAST PATH - Bypass complex optimizations during high load
-            if (cachedMSPT > 50.0 || optimizationsDisabled) { // High MSPT threshold OR disabled flag
-                // FLUID PAUSE SYSTEM - Check if this fluid is paused
+            // FLUID COOLDOWN SYSTEM - Check if this fluid is on cooldown
+            Long cooldownTime = fluidCooldowns.get(pos);
+            if (cooldownTime != null) {
+                // Fluid is on cooldown - check if cooldown has expired
+                if (System.currentTimeMillis() - cooldownTime < FLUID_COOLDOWN_DURATION) {
+                    return false; // Fluid still on cooldown
+                } else {
+                    // Cooldown expired - remove from cooldown list
+                    fluidCooldowns.remove(pos);
+                    System.out.println("[FLUID COOLDOWN] Cooldown expired - fluid can attempt to flow again at " + pos);
+                }
+            }
+            
+            // FLUID PAUSE SYSTEM - Check for paused fluids during high load
+            if (cachedMSPT > 30.0) { // Lower threshold for pause system activation
+                // Check if this fluid is paused
                 Long pauseTime = pausedFluids.get(pos);
                 if (pauseTime != null) {
                     // Fluid is paused - check if timeout has expired
                     if (System.currentTimeMillis() - pauseTime < FLUID_PAUSE_DURATION) {
                         return false; // Fluid waiting for timeout
                     } else {
-                        // Timeout expired - remove from paused list and allow processing
+                        // Timeout expired - remove from paused list and put on cooldown
                         pausedFluids.remove(pos);
-                        System.out.println("[FLUID PAUSE] Fluid timeout expired - resuming processing at " + pos);
+                        if (fluidCooldowns.size() < MAX_COOLDOWN_FLUIDS) {
+                            fluidCooldowns.put(pos, System.currentTimeMillis());
+                            System.out.println("[FLUID PAUSE] Fluid timeout expired - placed on cooldown at " + pos);
+                        }
+                        return false; // Fluid now on cooldown
                     }
                 }
                 
+                // If we're in high load, put new fluids that are far from players on cooldown
+                if (!isWithinPlayerRadius(pos)) {
+                    // PUT THE FLUID ON COOLDOWN instead of just skipping it
+                    if (fluidCooldowns.size() < MAX_COOLDOWN_FLUIDS) {
+                        fluidCooldowns.put(pos, System.currentTimeMillis());
+                        System.out.println("[FLUID COOLDOWN] New fluid placed on cooldown during high load at " + pos);
+                        return false; // Fluid on cooldown - will retry after cooldown period
+                    } else {
+                        // Too many cooldowns - just skip this one
+                        return false;
+                    }
+                }
+            }
+            
+            // SIMPLIFIED FAST PATH - Bypass complex optimizations during high load
+            if (cachedMSPT > 50.0 || optimizationsDisabled) { // High MSPT threshold OR disabled flag
                 // Simple distance check only - skip complex unified optimization
                 if (!isWithinPlayerRadius(pos)) {
-                    // PAUSE THE FLUID instead of skipping it
-                    if (pausedFluids.size() < MAX_PAUSED_FLUIDS) {
-                        pausedFluids.put(pos, System.currentTimeMillis());
-                        return false; // Fluid paused - will try again after timeout
+                    // PUT ON COOLDOWN even during fast path
+                    if (fluidCooldowns.size() < MAX_COOLDOWN_FLUIDS) {
+                        fluidCooldowns.put(pos, System.currentTimeMillis());
+                        return false; // Fluid on cooldown
                     } else {
-                        // Too many paused fluids - just skip this one
-                        return false;
+                        return false; // Skip if too many cooldowns
                     }
                 }
                 
@@ -3073,7 +3109,7 @@ public class FlowingFluidsFixesMinimal {
             return; // Already processing this position
         }
         
-        // LAZY EVALUATION - Only evaluate expensive processing when needed
+        // Only evaluate expensive processing if needed
         if (!shouldProcess.get()) {
             skippedFluidEvents.incrementAndGet();
             fluidProcessingFlags.clear(posKey); // Clear flag when skipped
@@ -3354,6 +3390,18 @@ public class FlowingFluidsFixesMinimal {
             pausedFluids.remove(pos);
         }
         
+        // Prevent memory leak - limit paused fluids
+        if (pausedFluids.size() > MAX_PAUSED_FLUIDS) {
+            // Remove oldest paused fluids if we exceed the limit
+            List<Map.Entry<BlockPos, Long>> entries = new ArrayList<>(pausedFluids.entrySet());
+            entries.sort(Map.Entry.comparingByValue()); // Sort by timestamp (oldest first)
+            
+            int toRemove = pausedFluids.size() - MAX_PAUSED_FLUIDS;
+            for (int i = 0; i < toRemove; i++) {
+                pausedFluids.remove(entries.get(i).getKey());
+            }
+        }
+        
         if (!expiredFluids.isEmpty()) {
             System.out.println("[FLUID PAUSE] Cleaned up " + expiredFluids.size() + " expired paused fluids");
         }
@@ -3377,6 +3425,40 @@ public class FlowingFluidsFixesMinimal {
         
         if (processed > 0) {
             System.out.println("[CIRCULAR BUFFER] Processed " + processed + " queued fluids");
+        }
+    }
+    
+    // FLUID COOLDOWN CLEANUP - Remove expired cooldowns
+    private static void cleanupExpiredCooldowns() {
+        long currentTime = System.currentTimeMillis();
+        List<BlockPos> expiredCooldowns = new ArrayList<>();
+        
+        // Find expired cooldowns
+        for (Map.Entry<BlockPos, Long> entry : fluidCooldowns.entrySet()) {
+            if (currentTime - entry.getValue() > FLUID_COOLDOWN_DURATION) {
+                expiredCooldowns.add(entry.getKey());
+            }
+        }
+        
+        // Remove expired cooldowns
+        for (BlockPos pos : expiredCooldowns) {
+            fluidCooldowns.remove(pos);
+        }
+        
+        // Prevent memory leak - limit cooldowns
+        if (fluidCooldowns.size() > MAX_COOLDOWN_FLUIDS) {
+            // Remove oldest cooldowns if we exceed the limit
+            List<Map.Entry<BlockPos, Long>> entries = new ArrayList<>(fluidCooldowns.entrySet());
+            entries.sort(Map.Entry.comparingByValue()); // Sort by timestamp (oldest first)
+            
+            int toRemove = fluidCooldowns.size() - MAX_COOLDOWN_FLUIDS;
+            for (int i = 0; i < toRemove; i++) {
+                fluidCooldowns.remove(entries.get(i).getKey());
+            }
+        }
+        
+        if (!expiredCooldowns.isEmpty()) {
+            System.out.println("[FLUID COOLDOWN] Cleaned up " + expiredCooldowns.size() + " expired cooldowns");
         }
     }
 }
