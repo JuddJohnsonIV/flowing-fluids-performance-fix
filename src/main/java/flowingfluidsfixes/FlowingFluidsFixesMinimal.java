@@ -449,8 +449,8 @@ public class FlowingFluidsFixesMinimal {
         // Register event bus
         var bus = FMLJavaModLoadingContext.get().getModEventBus();
         bus.addListener(this::commonSetup);
-        bus.addListener(this::onServerTick);
         MinecraftForge.EVENT_BUS.register(this);
+        MinecraftForge.EVENT_BUS.addListener(this::onServerTick);
         
         // Use the event parameter to fix warning
         System.out.println("[FlowingFluidsFixes] Constructor initialized with event system");
