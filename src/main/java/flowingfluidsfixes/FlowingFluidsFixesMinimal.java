@@ -7,6 +7,8 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.material.Fluids;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
@@ -30,6 +32,16 @@ public class FlowingFluidsFixesMinimal {
     private static final AtomicInteger totalFluidEvents = new AtomicInteger(0);
     private static final AtomicInteger skippedFluidEvents = new AtomicInteger(0);
     private static final AtomicInteger eventsThisTick = new AtomicInteger(0);
+    
+    // RIVER FLOW OPTIMIZATION - Priority-based processing for long-distance fluid flow
+    private static final ConcurrentHashMap<Long, Integer> fluidFlowPriority = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Long, Long> riverSourceBlocks = new ConcurrentHashMap<>();
+    private static final AtomicInteger riverFlowOperations = new AtomicInteger(0);
+    private static final AtomicInteger riverFlowSkipped = new AtomicInteger(0);
+    
+    // River flow performance tracking
+    private static final AtomicInteger maxRiverLength = new AtomicInteger(0);
+    private static final AtomicInteger activeRivers = new AtomicInteger(0);
     
     // OCEAN DRAINAGE EMERGENCY MODE - Detect massive fluid cascades
     private static final AtomicInteger fluidEventsInLastSecond = new AtomicInteger(0);
@@ -226,6 +238,9 @@ public class FlowingFluidsFixesMinimal {
             entityDataOpsThisTick.set(0);
             neighborUpdateOpsThisTick.set(0);
             entitySectionOpsThisTick.set(0);
+            
+            // Reset river flow operations counter
+            riverFlowOperations.set(0);
             
             // Clean up expired caches periodically
             if (System.currentTimeMillis() % 10000 < 200) { // Every 10 seconds
@@ -1069,12 +1084,128 @@ public class FlowingFluidsFixesMinimal {
             shouldAllow = Math.random() < 0.0001;
         }
         
+        // RIVER FLOW OPTIMIZATION - Priority-based processing for long-distance fluid flow
+        if (!shouldAllow && cachedMSPT > 15.0) {
+            // Check if this is part of a river flow system
+            if (isPartOfRiverFlow(level, pos)) {
+                // River flow gets higher priority during high MSPT
+                int riverPriority = calculateRiverFlowPriority(level, pos);
+                int maxRiverOps = getMaxRiverFlowOperations();
+                
+                // Allow river flow based on priority and available operations
+                if (riverFlowOperations.get() < maxRiverOps && riverPriority > 3) {
+                    shouldAllow = true;
+                    riverFlowOperations.incrementAndGet();
+                } else {
+                    riverFlowSkipped.incrementAndGet();
+                }
+            }
+        }
+        
         // UPDATE COUNTERS for event prevention
         if (!shouldAllow) {
             skippedFluidEvents.incrementAndGet();
         }
         
         return shouldAllow;
+    }
+    
+    // RIVER FLOW DETECTION - Identify if fluid is part of a river system
+    private static boolean isPartOfRiverFlow(ServerLevel level, BlockPos pos) {
+        // Check if this fluid has a continuous downhill path
+        // Rivers are characterized by continuous flow in one direction
+        
+        // Get current fluid level
+        BlockState currentState = level.getBlockState(pos);
+        FluidState currentFluid = currentState.getFluidState();
+        
+        if (currentFluid.isEmpty()) {
+            return false;
+        }
+        
+        // Check for continuous downhill flow (river characteristic)
+        BlockPos currentPos = pos;
+        int downhillSteps = 0;
+        int maxChecks = 10; // Limit checks to prevent infinite loops
+        
+        for (int i = 0; i < maxChecks; i++) {
+            BlockPos belowPos = currentPos.below();
+            if (!level.isLoaded(belowPos)) break;
+            
+            BlockState belowState = level.getBlockState(belowPos);
+            FluidState belowFluid = belowState.getFluidState();
+            
+            // If below is empty or lower fluid level, this could be a river
+            if (belowFluid.isEmpty() || 
+                (belowFluid.getType() == currentFluid.getType() && belowFluid.getAmount() < currentFluid.getAmount())) {
+                downhillSteps++;
+                currentPos = belowPos;
+                currentFluid = belowFluid;
+            } else {
+                break; // No more downhill flow
+            }
+        }
+        
+        // If we found 3+ consecutive downhill steps, it's likely a river
+        return downhillSteps >= 3;
+    }
+    
+    // RIVER FLOW PRIORITY CALCULATION - Calculate priority based on river characteristics
+    private static int calculateRiverFlowPriority(ServerLevel level, BlockPos pos) {
+        int priority = 1; // Base priority
+        
+        // Priority factors:
+        // 1. Distance from source (further = higher priority)
+        // 2. Fluid level (higher level = higher priority)  
+        // 3. Player proximity (nearby = higher priority)
+        // 4. River length (longer rivers = higher priority)
+        
+        // Check player proximity
+        for (net.minecraft.server.level.ServerPlayer player : level.players()) {
+            double dx = player.getX() - pos.getX();
+            double dy = player.getY() - pos.getY();
+            double dz = player.getZ() - pos.getZ();
+            double distanceSq = dx*dx + dy*dy + dz*dz;
+            
+            if (distanceSq <= 64*64) { // Within 64 blocks
+                priority += 2;
+                break;
+            }
+        }
+        
+        // Check fluid level
+        BlockState state = level.getBlockState(pos);
+        FluidState fluid = state.getFluidState();
+        int fluidLevel = fluid.getAmount();
+        if (fluidLevel >= 7) {
+            priority += 2; // Full or nearly full blocks
+        } else if (fluidLevel >= 5) {
+            priority += 1; // Medium level
+        }
+        
+        // Check if near river source (springs, lakes, etc.)
+        BlockPos abovePos = pos.above();
+        if (level.isLoaded(abovePos)) {
+            BlockState aboveState = level.getBlockState(abovePos);
+            if (aboveState.is(Blocks.WATER) || aboveState.getFluidState().isSource()) {
+                priority += 3; // Near source
+            }
+        }
+        
+        return priority;
+    }
+    
+    // MAX RIVER FLOW OPERATIONS - Dynamic limit based on MSPT
+    private static int getMaxRiverFlowOperations() {
+        if (cachedMSPT > 50.0) {
+            return 5; // Very limited during extreme lag
+        } else if (cachedMSPT > 30.0) {
+            return 10; // Limited during high lag
+        } else if (cachedMSPT > 20.0) {
+            return 25; // Moderate during medium lag
+        } else {
+            return 50; // Generous during normal operation
+        }
     }
     
     // OCEAN DRAINAGE EMERGENCY MODE - Detect massive fluid cascades
