@@ -102,6 +102,19 @@ public class FluidProcessingMixin {
         
         ServerLevel level = (ServerLevel)(Object)this;
         
+        // CHUNK BOUNDARY PREVENTION: Prevent chunk loading during high MSPT
+        if (FlowingFluidsFixesMinimal.shouldSkipBlockOperation(level, pos)) {
+            // Check if this is at a chunk boundary
+            boolean atBoundary = (pos.getX() % 16 == 0 || pos.getX() % 16 == 15 || 
+                                pos.getZ() % 16 == 0 || pos.getZ() % 16 == 15);
+            
+            if (atBoundary) {
+                // Return false to prevent chunk loading during high load
+                cir.setReturnValue(false);
+                return;
+            }
+        }
+        
         // During extreme MSPT, be more aggressive about chunk loading
         if (FlowingFluidsFixesMinimal.shouldSkipBlockOperation(level, pos)) {
             // Return false to prevent chunk loading during high load

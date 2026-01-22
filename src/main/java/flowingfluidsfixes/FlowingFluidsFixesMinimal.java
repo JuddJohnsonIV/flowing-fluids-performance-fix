@@ -966,55 +966,83 @@ public class FlowingFluidsFixesMinimal {
             return true; // Allow all updates when disabled
         }
         
-        // AGGRESSIVE: Completely stop fluid updates during extreme MSPT
-        if (cachedMSPT > 50.0) {
-            return false; // NO FLUID UPDATES AT ALL
+        // SMOOTH SCALING: Use exponential curve instead of binary switching
+        double msptAboveThreshold = Math.max(0, cachedMSPT - 15.0); // Start scaling at 15ms
+        
+        if (msptAboveThreshold <= 0) {
+            return true; // Normal MSPT - allow all updates
         }
         
-        // HIGH: Severely limit fluid updates during high MSPT
-        if (cachedMSPT > 30.0) {
-            // Only allow 1% of normal fluid updates
-            return Math.random() > 0.99;
+        // SMOOTH EXPONENTIAL SCALING: 
+        // 15ms = 100% allowed
+        // 20ms = 80% allowed  
+        // 25ms = 50% allowed
+        // 30ms = 25% allowed
+        // 35ms = 10% allowed
+        // 40ms+ = 5% allowed (never completely stops)
+        
+        double scalingFactor;
+        if (msptAboveThreshold <= 5.0) {        // 15-20ms: Gentle scaling
+            scalingFactor = 1.0 - (msptAboveThreshold * 0.04); // 4% reduction per ms
+        } else if (msptAboveThreshold <= 10.0) { // 20-25ms: Moderate scaling  
+            scalingFactor = 0.8 - ((msptAboveThreshold - 5.0) * 0.06); // 6% reduction per ms
+        } else if (msptAboveThreshold <= 15.0) { // 25-30ms: Strong scaling
+            scalingFactor = 0.5 - ((msptAboveThreshold - 10.0) * 0.05); // 5% reduction per ms
+        } else if (msptAboveThreshold <= 20.0) { // 30-35ms: Heavy scaling
+            scalingFactor = 0.25 - ((msptAboveThreshold - 15.0) * 0.03); // 3% reduction per ms
+        } else {                                 // 35ms+: Very heavy scaling
+            scalingFactor = Math.max(0.05, 0.1 - ((msptAboveThreshold - 20.0) * 0.01)); // 1% reduction per ms, min 5%
         }
         
-        // MODERATE: Limit fluid updates during medium MSPT
-        if (cachedMSPT > 20.0) {
-            // Only allow 10% of normal fluid updates
-            return Math.random() > 0.90;
-        }
-        
-        // LOW: Slight limitation during mild MSPT
-        if (cachedMSPT > 15.0) {
-            // Only allow 50% of normal fluid updates
-            return Math.random() > 0.50;
-        }
-        
-        return true; // Allow all updates during normal MSPT
+        // Apply smooth scaling with random distribution
+        return Math.random() < scalingFactor;
     }
     
     // EVENT PREVENTION: Check if we should allow fluid processing at this position
     public static boolean shouldAllowFluidProcessingAt(ServerLevel level, BlockPos pos) {
-        if (!shouldAllowFluidUpdates(level)) {
-            return false; // Global throttling active
-        }
+        boolean shouldAllow = true;
         
-        // SPATIAL: Only process fluids near players during high MSPT
-        if (cachedMSPT > 25.0) {
-            // Check if any players are nearby (within 32 blocks)
-            for (net.minecraft.server.level.ServerPlayer player : level.players()) {
-                double dx = player.getX() - pos.getX();
-                double dy = player.getY() - pos.getY();
-                double dz = player.getZ() - pos.getZ();
-                double distanceSq = dx*dx + dy*dy + dz*dz;
+        if (!shouldAllowFluidUpdates(level)) {
+            shouldAllow = false; // Global throttling active
+        } else {
+            // SPATIAL: Only process fluids near players during high MSPT
+            if (cachedMSPT > 20.0) { // Lower threshold (was 25.0)
+                // SMOOTH SPATIAL SCALING: Gradually reduce radius based on MSPT
+                double msptAboveThreshold = cachedMSPT - 20.0;
+                double maxRadius = 32.0; // Start with 32 blocks
+                double minRadius = 8.0;  // Never go below 8 blocks
                 
-                if (distanceSq <= 32*32) { // 32 blocks = 1024 distance squared
-                    return true; // Player nearby, allow processing
+                // Smooth radius reduction: 32 blocks at 20ms, 8 blocks at 40ms+
+                double radiusReduction = Math.min(msptAboveThreshold * 1.2, maxRadius - minRadius);
+                double currentRadius = maxRadius - radiusReduction;
+                
+                // Check if any players are within the smoothly scaled radius
+                boolean playerNearby = false;
+                double radiusSq = currentRadius * currentRadius;
+                
+                for (net.minecraft.server.level.ServerPlayer player : level.players()) {
+                    double dx = player.getX() - pos.getX();
+                    double dy = player.getY() - pos.getY();
+                    double dz = player.getZ() - pos.getZ();
+                    double distanceSq = dx*dx + dy*dy + dz*dz;
+                    
+                    if (distanceSq <= radiusSq) {
+                        playerNearby = true;
+                        break;
+                    }
+                }
+                if (!playerNearby) {
+                    shouldAllow = false; // No players nearby, skip processing
                 }
             }
-            return false; // No players nearby, skip processing
         }
         
-        return true; // Allow processing
+        // UPDATE COUNTERS for event prevention
+        if (!shouldAllow) {
+            skippedFluidEvents.incrementAndGet();
+        }
+        
+        return shouldAllow;
     }
     
     // FLUID STATE CACHING - Core optimization methods
