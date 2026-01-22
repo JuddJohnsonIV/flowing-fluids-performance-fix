@@ -263,10 +263,12 @@ public class FlowingFluidsFixesMinimal {
         public int getTickCount() { return tickCount; }
     }
     
-    // Performance thresholds and metrics
+    // Performance thresholds and metrics - AGGRESSIVE THROTTLING BASED ON SPARK PROFILE
     private static final double PERFORMANCE_REPORT_INTERVAL = 10000; // 10 seconds
-    private static final double MSPT_WARNING_THRESHOLD = 20.0;
-    private static final double MSPT_CRITICAL_THRESHOLD = 30.0;
+    private static final double MSPT_WARNING_THRESHOLD = 15.0; // LOWERED from 20.0
+    private static final double MSPT_CRITICAL_THRESHOLD = 25.0; // LOWERED from 30.0
+    private static final double MSPT_EMERGENCY_THRESHOLD = 40.0; // NEW - Emergency mode
+    private static final double FLOWING_FLUID_EMERGENCY_THRESHOLD = 35.0; // NEW - Specific to fluid operations
     private static final double OPTIMIZATION_EFFECTIVENESS_TARGET = 0.8; // 80% improvement target
     
     // TESTING VALIDATION - Cache effectiveness and MSPT reduction validation
@@ -288,6 +290,10 @@ public class FlowingFluidsFixesMinimal {
     private static final long WORLD_CHANGE_CACHE_DURATION = 5000; // 5 seconds for world changes
     private static final AtomicInteger worldChangeEvents = new AtomicInteger(0);
     private static final AtomicInteger cacheInvalidations = new AtomicInteger(0);
+    
+    // SPARK PROFILE EMERGENCY THROTTLING TRACKING
+    private static final AtomicInteger emergencyActivations = new AtomicInteger(0);
+    private static final AtomicInteger aggressiveThrottlingActivations = new AtomicInteger(0);
     
     // World change tracking
     private static final Set<BlockPos> recentExplosions = ConcurrentHashMap.newKeySet();
@@ -446,6 +452,15 @@ public class FlowingFluidsFixesMinimal {
             
             // PREVENTIVE FLUID MANAGEMENT - Update adaptive systems
             updateAdaptiveThresholds();
+            
+            // SPARK PROFILE EMERGENCY THROTTLING - Based on profile analysis
+            if (cachedMSPT > MSPT_EMERGENCY_THRESHOLD) {
+                // EMERGENCY MODE: Shut down all fluid operations
+                emergencyFluidShutdown();
+            } else if (cachedMSPT > FLOWING_FLUID_EMERGENCY_THRESHOLD) {
+                // FLOWING FLUID EMERGENCY: Aggressive throttling
+                aggressiveFluidThrottling();
+            }
             
             // Process pending fluid changes gradually
             processPendingFluidChanges();
@@ -2860,5 +2875,74 @@ public class FlowingFluidsFixesMinimal {
     
     public static int getTotalOptimizationCount() {
         return skippedFluidEvents.get() + skippedWorldwideOps.get();
+    }
+    
+    // SPARK PROFILE EMERGENCY THROTTLING METHODS
+    
+    /**
+     * EMERGENCY MODE: Complete fluid shutdown based on Spark profile analysis
+     * Triggered when MSPT > 40ms (severe performance degradation)
+     */
+    private static void emergencyFluidShutdown() {
+        emergencyActivations.incrementAndGet();
+        
+        // Clear all pending fluid changes
+        pendingFluidChanges.clear();
+        
+        // Clear all caches to free memory
+        blockStateCache.clear();
+        fluidStateCache.clear();
+        fluidStateHashCache.clear();
+        
+        // Set maximum throttling
+        adaptiveThrottleLevel = 5; // Maximum throttling
+        
+        // Disable spatial optimization temporarily
+        spatialOptimizationActive = false;
+        
+        // Force cleanup
+        cleanupExpiredStateCaches(); // Only call the static method
+        
+        System.out.println("[FLOWING FLUIDS EMERGENCY] Complete shutdown triggered - MSPT: " + cachedMSPT);
+    }
+    
+    /**
+     * AGGRESSIVE THROTTLING: Heavy fluid throttling based on Spark profile analysis
+     * Triggered when MSPT > 35ms (fluid operations causing lag)
+     */
+    private static void aggressiveFluidThrottling() {
+        aggressiveThrottlingActivations.incrementAndGet();
+        
+        // Reduce pending fluid changes to minimum
+        if (pendingFluidChanges.size() > 10) {
+            // Keep only the 10 most recent chunks with fluid changes
+            List<Map.Entry<Long, List<BlockPos>>> entries = new ArrayList<>(pendingFluidChanges.entrySet());
+            int keepCount = 10;
+            
+            // Clear and re-add only the most recent chunks
+            pendingFluidChanges.clear();
+            
+            for (Map.Entry<Long, List<BlockPos>> entry : entries) {
+                if (keepCount > 0) {
+                    pendingFluidChanges.put(entry.getKey(), entry.getValue());
+                    keepCount--;
+                }
+            }
+        }
+        
+        // Set high throttling level
+        adaptiveThrottleLevel = 4; // High throttling
+        
+        // Reduce cache sizes to free memory
+        if (blockStateCache.size() > 1000) {
+            // Keep only most recent entries
+            blockStateCache.clear(); // Clear completely in emergency
+        }
+        
+        if (fluidStateCache.size() > 500) {
+            fluidStateCache.clear(); // Clear completely in emergency
+        }
+        
+        System.out.println("[FLOWING FLUIDS AGGRESSIVE] Heavy throttling activated - MSPT: " + cachedMSPT);
     }
 }
