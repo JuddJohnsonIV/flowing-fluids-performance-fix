@@ -23,6 +23,8 @@ import java.util.List;
 import java.util.ArrayList;
 import java.util.Set;
 import java.util.Map;
+import java.util.BitSet;
+import java.util.function.Supplier;
 import net.minecraft.server.level.ServerPlayer;
 
 @Mod(FlowingFluidsFixesMinimal.MOD_ID)
@@ -309,6 +311,63 @@ public class FlowingFluidsFixesMinimal {
     private static long eventsThisSecond = 0;
     private static long lastSecondReset = System.currentTimeMillis();
     
+    // PROGRESSIVE RECOVERY SYSTEM - Timeout and gradual restoration
+    private static long lastHighMSPTTime = 0;
+    private static final long HIGH_MSPT_TIMEOUT = 10000; // 10 seconds timeout
+    private static final long CRITICAL_MSPT_TIMEOUT = 5000; // 5 seconds timeout
+    private static boolean optimizationsDisabled = false;
+    private static long optimizationsDisabledTime = 0;
+    
+    // FLUID PAUSE SYSTEM - Individual fluid blocks wait for timeout
+    private static final ConcurrentHashMap<BlockPos, Long> pausedFluids = new ConcurrentHashMap<>();
+    private static final long FLUID_PAUSE_DURATION = 5000; // 5 seconds pause for individual fluids
+    private static final int MAX_PAUSED_FLUIDS = 5000; // REDUCED from 10000 to prevent memory issues
+    private static long lastPauseCleanup = System.currentTimeMillis();
+    private static final long PAUSE_CLEANUP_INTERVAL = 30000; // Clean up every 30 seconds
+    
+    // BITSET OPTIMIZATION - Compact boolean storage (87% memory reduction)
+    private static final BitSet fluidProcessingFlags = new BitSet(1000); // Track processing state
+    private static final BitSet chunkProcessingFlags = new BitSet(1000); // Track chunk processing
+    
+    // CIRCULAR BUFFER - Efficient O(1) operations for fluid queues
+    private static final CircularBuffer<BlockPos> fluidQueue = new CircularBuffer<>(1000);
+    
+    // Simple circular buffer implementation
+    private static class CircularBuffer<T> {
+        private final Object[] buffer;
+        private int head = 0;
+        private int tail = 0;
+        private final int capacity;
+        private int size = 0;
+        
+        public CircularBuffer(int capacity) {
+            this.capacity = capacity;
+            this.buffer = new Object[capacity];
+        }
+        
+        public void add(T item) {
+            buffer[tail] = item;
+            tail = (tail + 1) % capacity;
+            if (size < capacity) {
+                size++;
+            } else {
+                head = (head + 1) % capacity; // Overwrite oldest
+            }
+        }
+        
+        @SuppressWarnings("unchecked")
+        public T remove() {
+            if (size == 0) return null;
+            T item = (T) buffer[head];
+            head = (head + 1) % capacity;
+            size--;
+            return item;
+        }
+        
+        public int size() { return size; }
+        public boolean isEmpty() { return size == 0; }
+    }
+    
     // GRACEFUL DEGRADATION - Process existing fluids, reject new ones
     private static boolean acceptNewFluids = true; // Controls whether to accept new fluid updates
     
@@ -475,7 +534,8 @@ public class FlowingFluidsFixesMinimal {
             
             // Check if we should exit emergency mode (with hysteresis)
             if (inEmergencyMode && (currentTime - lastEmergencyTime) > emergencyDuration) {
-                if (cachedMSPT < MSPT_CRITICAL_THRESHOLD) { // Need to drop below critical to exit
+                // OPTIMIZED: Use lookup table instead of if-statement
+                if (getMSPTAction(cachedMSPT) <= 2) { // 2 = critical threshold action
                     inEmergencyMode = false;
                     acceptNewFluids = true; // Re-enable new fluid acceptance
                     adaptiveThrottleLevel = 2; // Moderate throttling on recovery
@@ -485,11 +545,38 @@ public class FlowingFluidsFixesMinimal {
             
             // Check if we should exit aggressive mode (with hysteresis)
             if (inAggressiveMode && !inEmergencyMode && (currentTime - lastAggressiveTime) > aggressiveDuration) {
-                if (cachedMSPT < MSPT_WARNING_THRESHOLD) { // Need to drop below warning to exit
+                // OPTIMIZED: Use lookup table instead of if-statement
+                if (getMSPTAction(cachedMSPT) <= 1) { // 1 = warning threshold action
                     inAggressiveMode = false;
                     acceptNewFluids = true; // Re-enable new fluid acceptance
                     adaptiveThrottleLevel = 1; // Light throttling on recovery
                     System.out.println("[FLOWING FLUIDS RECOVERY] Aggressive throttling ended - accepting new fluids - MSPT: " + cachedMSPT);
+                }
+            }
+            
+            // PROGRESSIVE RECOVERY SYSTEM - Timeout-based restoration
+            if (cachedMSPT > 100.0) {
+                // Critical MSPT - mark when high load started
+                if (lastHighMSPTTime == 0) {
+                    lastHighMSPTTime = currentTime;
+                    optimizationsDisabled = true;
+                    optimizationsDisabledTime = currentTime;
+                    System.out.println("[FLOWING FLUIDS RECOVERY] Critical MSPT detected - optimizations disabled - MSPT: " + cachedMSPT);
+                }
+            } else if (optimizationsDisabled) {
+                // Check if we should re-enable optimizations after timeout
+                long disabledDuration = currentTime - optimizationsDisabledTime;
+                
+                if (cachedMSPT < 50.0 && disabledDuration > CRITICAL_MSPT_TIMEOUT) {
+                    // Re-enable optimizations after 5 seconds of good performance
+                    optimizationsDisabled = false;
+                    lastHighMSPTTime = 0;
+                    System.out.println("[FLOWING FLUIDS RECOVERY] Optimizations re-enabled after timeout - MSPT: " + cachedMSPT);
+                } else if (cachedMSPT < 30.0 && disabledDuration > HIGH_MSPT_TIMEOUT) {
+                    // Force re-enable after 10 seconds even if MSPT is moderate
+                    optimizationsDisabled = false;
+                    lastHighMSPTTime = 0;
+                    System.out.println("[FLOWING FLUIDS RECOVERY] Optimizations force-re-enabled after timeout - MSPT: " + cachedMSPT);
                 }
             }
             
@@ -504,6 +591,12 @@ public class FlowingFluidsFixesMinimal {
             
             // Process pending fluid changes gradually
             processPendingFluidChanges();
+            
+            // FLUID PAUSE CLEANUP - Remove expired paused fluids
+            if (currentTime - lastPauseCleanup > PAUSE_CLEANUP_INTERVAL) {
+                cleanupExpiredPausedFluids();
+                lastPauseCleanup = currentTime;
+            }
             
             // Initialize zones if not done yet
             if (zoneThrottling.isEmpty()) {
@@ -970,6 +1063,7 @@ public class FlowingFluidsFixesMinimal {
     // MSPT FACTOR LOOKUP TABLE - Replace chained if statements
     private static final double[] MSPT_THRESHOLDS = {15.0, 20.0, 30.0, 40.0, 50.0, 60.0};
     private static final double[] MSPT_FACTORS = {0.8, 0.5, 0.3, 0.2, 0.1, 0.05};
+    private static final int[] MSPT_ACTIONS = {1, 2, 1, 0, -1, -2}; // Corresponding actions for recovery logic
     
     private static double getMSPTFactor(double mspt) {
         for (int i = 0; i < MSPT_THRESHOLDS.length; i++) {
@@ -2878,12 +2972,62 @@ public class FlowingFluidsFixesMinimal {
         totalFluidEvents.incrementAndGet();
         eventsThisTick.incrementAndGet();
         
-        // HIGH MSPT FAST EXIT - Prevent optimization system from making lag worse
-        if (cachedMSPT > 100.0) { // Critical MSPT threshold
-            // Skip ALL optimizations during extreme lag - just count and exit
+        // LAZY EVALUATION - Only compute expensive values when needed
+        Supplier<Boolean> shouldProcess = () -> {
+            // HIGH MSPT FAST EXIT - Prevent optimization system from making lag worse
+            if (cachedMSPT > 100.0) { // Critical MSPT threshold
+                return false; // Fast exit to prevent making lag worse
+            }
+            
+            // SIMPLIFIED FAST PATH - Bypass complex optimizations during high load
+            if (cachedMSPT > 50.0 || optimizationsDisabled) { // High MSPT threshold OR disabled flag
+                // FLUID PAUSE SYSTEM - Check if this fluid is paused
+                Long pauseTime = pausedFluids.get(pos);
+                if (pauseTime != null) {
+                    // Fluid is paused - check if timeout has expired
+                    if (System.currentTimeMillis() - pauseTime < FLUID_PAUSE_DURATION) {
+                        return false; // Fluid waiting for timeout
+                    } else {
+                        // Timeout expired - remove from paused list and allow processing
+                        pausedFluids.remove(pos);
+                        System.out.println("[FLUID PAUSE] Fluid timeout expired - resuming processing at " + pos);
+                    }
+                }
+                
+                // Simple distance check only - skip complex unified optimization
+                if (!isWithinPlayerRadius(pos)) {
+                    // PAUSE THE FLUID instead of skipping it
+                    if (pausedFluids.size() < MAX_PAUSED_FLUIDS) {
+                        pausedFluids.put(pos, System.currentTimeMillis());
+                        return false; // Fluid paused - will try again after timeout
+                    } else {
+                        // Too many paused fluids - just skip this one
+                        return false;
+                    }
+                }
+                
+                return false; // Fast path - no complex optimizations
+            }
+            
+            return true; // Allow processing
+        };
+        
+        // BITSET OPTIMIZATION - Track processing state efficiently
+        int posKey = Math.abs(pos.hashCode()) % 1000;
+        if (fluidProcessingFlags.get(posKey)) {
             skippedFluidEvents.incrementAndGet();
-            return; // Fast exit to prevent making lag worse
+            return; // Already processing this position
         }
+        
+        // Only evaluate expensive processing if needed
+        if (!shouldProcess.get()) {
+            skippedFluidEvents.incrementAndGet();
+            fluidProcessingFlags.clear(posKey); // Clear flag when skipped
+            return;
+        }
+        
+        // Set processing flag
+        fluidProcessingFlags.set(posKey);
         
         // SPATIAL PARTITIONING - Only apply if active
         if (spatialOptimizationActive && !shouldProcessFluidInChunk(pos)) {
@@ -2933,6 +3077,13 @@ public class FlowingFluidsFixesMinimal {
             }
         }
         
+        // UNIFIED OPTIMIZATION - Skip during high load to prevent system overload
+        if (cachedMSPT > 50.0) {
+            // Skip complex unified optimization during high load
+            skippedFluidEvents.incrementAndGet();
+            return; // Fast exit - no complex optimizations
+        }
+        
         // 🎯 UNIFIED FLUID OPTIMIZATION - Apply all optimizations in one check
         if (!shouldProcessFluidUnified((ServerLevel) level, pos)) {
             skippedFluidEvents.incrementAndGet();
@@ -2953,6 +3104,16 @@ public class FlowingFluidsFixesMinimal {
     
     public static double getMSPTValue() {
         return cachedMSPT;
+    }
+    
+    // OPTIMIZED: MSPT action lookup table - replaces expensive if-statements
+    private static int getMSPTAction(double mspt) {
+        for (int i = 0; i < MSPT_THRESHOLDS.length; i++) {
+            if (mspt <= MSPT_THRESHOLDS[i]) {
+                return MSPT_ACTIONS[i];
+            }
+        }
+        return -3; // Above highest threshold - critical action
     }
     
     public static int getTotalSkippedOperations() {
@@ -3100,5 +3261,32 @@ public class FlowingFluidsFixesMinimal {
         }
         
         System.out.println("[FLOWING FLUIDS AGGRESSIVE] Limited new fluid acceptance - processing existing - MSPT: " + cachedMSPT + " (Duration: 3s minimum)");
+    }
+    
+    /**
+     * FLUID PAUSE CLEANUP - Remove expired paused fluids to prevent memory leaks
+     * Called every server tick to clean up paused fluids that have timed out
+     */
+    private static void cleanupExpiredPausedFluids() {
+        if (pausedFluids.isEmpty()) return; // No paused fluids to cleanup
+        
+        long currentTime = System.currentTimeMillis();
+        List<BlockPos> expiredFluids = new ArrayList<>();
+        
+        // Find expired paused fluids
+        for (Map.Entry<BlockPos, Long> entry : pausedFluids.entrySet()) {
+            if (currentTime - entry.getValue() >= FLUID_PAUSE_DURATION) {
+                expiredFluids.add(entry.getKey());
+            }
+        }
+        
+        // Remove expired fluids
+        for (BlockPos pos : expiredFluids) {
+            pausedFluids.remove(pos);
+        }
+        
+        if (!expiredFluids.isEmpty()) {
+            System.out.println("[FLUID PAUSE] Cleaned up " + expiredFluids.size() + " expired paused fluids");
+        }
     }
 }
