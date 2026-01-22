@@ -445,6 +445,33 @@ public class FlowingFluidsFixesMinimal {
         }
     }
     
+    // SAFE BLOCKPOS OFFSET - Handle obfuscated offset method
+    private static BlockPos safeOffset(BlockPos pos, int dx, int dy, int dz) {
+        try {
+            return pos.offset(dx, dy, dz); // Try direct method first
+        } catch (NoSuchMethodError e) {
+            // Fallback: Create new BlockPos with calculated coordinates
+            try {
+                // Try reflection to call offset method
+                java.lang.reflect.Method offsetMethod = BlockPos.class.getMethod("offset", int.class, int.class, int.class);
+                return (BlockPos) offsetMethod.invoke(pos, dx, dy, dz);
+            } catch (Exception ex) {
+                // Ultimate fallback: Create new BlockPos manually
+                int newX = getBlockPosX(pos) + dx;
+                int newY = getBlockPosY(pos) + dy;
+                int newZ = getBlockPosZ(pos) + dz;
+                try {
+                    // Try BlockPos constructor
+                    java.lang.reflect.Constructor<BlockPos> constructor = BlockPos.class.getConstructor(int.class, int.class, int.class);
+                    return constructor.newInstance(newX, newY, newZ);
+                } catch (Exception constructorEx) {
+                    // Last resort - return original position to prevent crash
+                    return pos;
+                }
+            }
+        }
+    }
+    
     // BITSET OPTIMIZATION - Compact boolean storage (87% memory reduction)
     private static final BitSet fluidProcessingFlags = new BitSet(1000); // Track processing state
     private static final BitSet chunkProcessingFlags = new BitSet(1000); // Track chunk processing
@@ -1507,7 +1534,7 @@ public class FlowingFluidsFixesMinimal {
         for (int dx = -3; dx <= 3; dx++) {
             for (int dz = -3; dz <= 3; dz++) {
                 if (dx == 0 && dz == 0) continue;
-                BlockPos checkPos = pos.offset(dx, 0, dz);
+                BlockPos checkPos = safeOffset(pos, dx, 0, dz);
                 // Use checkPos to check for water bodies (simplified check)
                 // In production, you'd check if there's water nearby using checkPos
                 if (checkPos.getY() < 60) return true; // Simple ocean detection
@@ -3186,7 +3213,7 @@ public class FlowingFluidsFixesMinimal {
                 for (int dx = -2; dx <= 2; dx++) {
                     for (int dz = -2; dz <= 2; dz++) {
                         if (dx == 0 && dz == 0) continue;
-                        BlockPos checkPos = pos.offset(dx, 0, dz);
+                        BlockPos checkPos = safeOffset(pos, dx, 0, dz);
                         if (level.isLoaded(checkPos)) {
                             BlockState checkState = level.getBlockState(checkPos);
                             if (checkState.is(Blocks.WATER)) {
