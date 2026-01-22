@@ -23,7 +23,7 @@ public class FluidProcessingMixin {
      * REAL MSPT IMPROVEMENT: Skip expensive world access when server is lagging
      * This hits the root cause of Flowing Fluids performance issues
      */
-    @Inject(method = "getBlockState", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "getBlockState(Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/level/block/state/BlockState;", at = @At("HEAD"), cancellable = true)
     public void onGetBlockState(BlockPos pos, CallbackInfoReturnable<BlockState> cir) {
         // Only throttle on server side when optimization is active
         if (!((Object)this instanceof ServerLevel) || !FlowingFluidsFixesMinimal.isSpatialOptimizationActive()) {
@@ -54,7 +54,7 @@ public class FluidProcessingMixin {
      * SECONDARY: Intercept Level.setBlock() calls to maintain cache consistency
      * This ensures our throttling doesn't cause world corruption
      */
-    @Inject(method = "setBlock", at = @At("HEAD"))
+    @Inject(method = "setBlock(Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/state/BlockState;I)Z", at = @At("HEAD"))
     public void onSetBlock(BlockPos pos, BlockState state, int flags, CallbackInfoReturnable<Boolean> cir) {
         // Only invalidate cache on server side and when optimization is active
         if (!((Object)this instanceof ServerLevel) || !FlowingFluidsFixesMinimal.isSpatialOptimizationActive()) {
