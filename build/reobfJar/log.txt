@@ -1,5 +1,5 @@
 Java Launcher: C:\Program Files\Java\jdk-17\bin\java.exe
-Arguments: '--in-jar, C:\Users\jwema\CascadeProjects\FlowingFluidsStandalone\build\libs\flowingfluidsfixes-1.0.16.jar, --out-jar, C:\Users\jwema\CascadeProjects\FlowingFluidsStandalone\build\reobfJar\output.jar, --srg-in, C:\Users\jwema\CascadeProjects\FlowingFluidsStandalone\build\createMcpToSrg\output.tsrg, --srg-in, C:\Users\jwema\CascadeProjects\FlowingFluidsStandalone\build\tmp\compileJava\compileJava-mappings.tsrg, --live'
+Arguments: '--in-jar, C:\Users\jwema\CascadeProjects\FlowingFluidsStandalone\build\libs\flowingfluidsfixes-1.1.0.jar, --out-jar, C:\Users\jwema\CascadeProjects\FlowingFluidsStandalone\build\reobfJar\output.jar, --srg-in, C:\Users\jwema\CascadeProjects\FlowingFluidsStandalone\build\createMcpToSrg\output.tsrg, --srg-in, C:\Users\jwema\CascadeProjects\FlowingFluidsStandalone\build\tmp\compileJava\compileJava-mappings.tsrg, --live'
 Classpath:
  - C:\Users\jwema\scoop\apps\gradle\current\.gradle\caches\forge_gradle\maven_downloader\net\md-5\SpecialSource\1.11.0\SpecialSource-1.11.0-shaded.jar
  - C:\Users\jwema\scoop\apps\gradle\current\.gradle\caches\forge_gradle\minecraft_user_repo\net\minecraftforge\forge\1.20.1-47.4.13_mapped_official_1.20.1\forge-1.20.1-47.4.13_mapped_official_1.20.1.jar
