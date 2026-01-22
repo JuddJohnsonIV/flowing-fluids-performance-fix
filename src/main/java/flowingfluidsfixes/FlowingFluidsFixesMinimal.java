@@ -15,7 +15,6 @@ import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.level.BlockEvent;
 import net.minecraftforge.common.MinecraftForge;
-import net.minecraft.client.Minecraft;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -299,9 +298,9 @@ public class FlowingFluidsFixesMinimal {
     
     // EMERGENCY RECOVERY MANAGEMENT - Prevent rapid on/off cycling
     private static long lastEmergencyTime = 0;
-    private static long emergencyDuration = 5000; // 5 seconds minimum emergency duration
+    private static final long emergencyDuration = 5000; // 5 seconds minimum emergency duration
     private static long lastAggressiveTime = 0;
-    private static long aggressiveDuration = 3000; // 3 seconds minimum aggressive duration
+    private static final long aggressiveDuration = 3000; // 3 seconds minimum aggressive duration
     private static boolean inEmergencyMode = false;
     private static boolean inAggressiveMode = false;
     
@@ -322,11 +321,129 @@ public class FlowingFluidsFixesMinimal {
     private static final ConcurrentHashMap<BlockPos, Long> pausedFluids = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<BlockPos, Long> fluidCooldowns = new ConcurrentHashMap<>(); // NEW: Cooldown tracking
     private static final long FLUID_PAUSE_DURATION = 5000; // 5 seconds pause for individual fluids
-    private static final long FLUID_COOLDOWN_DURATION = 3000; // 3 seconds cooldown before retry
+    private static final long FLUID_COOLDOWN_DURATION = 5000; // INCREASED: 5 seconds cooldown for large operations
     private static final int MAX_PAUSED_FLUIDS = 5000; // REDUCED from 10000 to prevent memory issues
     private static final int MAX_COOLDOWN_FLUIDS = 10000; // Maximum cooldowns to track
     private static long lastPauseCleanup = System.currentTimeMillis();
     private static final long PAUSE_CLEANUP_INTERVAL = 30000; // Clean up every 30 seconds
+    
+    // COOLDOWN RATE LIMITING - Prevent processing storms
+    private static final AtomicInteger cooldownExpirationsThisTick = new AtomicInteger(0);
+    private static final int MAX_COOLDOWN_EXPIRATIONS_PER_TICK = 25; // REDUCED: Stricter limit for large operations
+    private static long lastTickReset = System.currentTimeMillis();
+    
+    // REFLECTION HELPER - Handle obfuscated BlockPos methods
+    private static int getBlockPosX(BlockPos pos) {
+        try {
+            return pos.getX(); // Try direct method first
+        } catch (NoSuchMethodError e) {
+            // Fallback: Use reflection to access the field
+            try {
+                java.lang.reflect.Field field = BlockPos.class.getDeclaredField("f");
+                field.setAccessible(true);
+                return field.getInt(pos);
+            } catch (Exception ex) {
+                // Ultimate fallback: use toString parsing with correct pattern
+                String posStr = pos.toString();
+                // BlockPos.toString() format: "BlockPos{x=X, y=Y, z=Z}"
+                // Extract X coordinate using regex
+                try {
+                    java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("x=(-?\\d+)");
+                    java.util.regex.Matcher matcher = pattern.matcher(posStr);
+                    if (matcher.find()) {
+                        return Integer.parseInt(matcher.group(1));
+                    }
+                } catch (Exception regexEx) {
+                    // If regex fails, try simple string manipulation
+                    int xIndex = posStr.indexOf("x=");
+                    if (xIndex != -1) {
+                        int commaIndex = posStr.indexOf(',', xIndex + 2);
+                        if (commaIndex != -1) {
+                            String xStr = posStr.substring(xIndex + 2, commaIndex);
+                            return Integer.parseInt(xStr.trim());
+                        }
+                    }
+                }
+                // Last resort - return 0 to prevent crash
+                return 0;
+            }
+        }
+    }
+    
+    private static int getBlockPosY(BlockPos pos) {
+        try {
+            return pos.getY(); // Try direct method first
+        } catch (NoSuchMethodError e) {
+            // Fallback: Use reflection to access the field
+            try {
+                java.lang.reflect.Field field = BlockPos.class.getDeclaredField("g");
+                field.setAccessible(true);
+                return field.getInt(pos);
+            } catch (Exception ex) {
+                // Ultimate fallback: use toString parsing with correct pattern
+                String posStr = pos.toString();
+                // BlockPos.toString() format: "BlockPos{x=X, y=Y, z=Z}"
+                // Extract Y coordinate using regex or manual parsing
+                try {
+                    // Use regex to find y=Y pattern
+                    java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("y=(-?\\d+)");
+                    java.util.regex.Matcher matcher = pattern.matcher(posStr);
+                    if (matcher.find()) {
+                        return Integer.parseInt(matcher.group(1));
+                    }
+                } catch (Exception regexEx) {
+                    // If regex fails, try simple string manipulation
+                    int yIndex = posStr.indexOf("y=");
+                    if (yIndex != -1) {
+                        int commaIndex = posStr.indexOf(',', yIndex + 2);
+                        if (commaIndex != -1) {
+                            String yStr = posStr.substring(yIndex + 2, commaIndex);
+                            return Integer.parseInt(yStr.trim());
+                        }
+                    }
+                }
+                // Last resort - return 0 to prevent crash
+                return 0;
+            }
+        }
+    }
+    
+    private static int getBlockPosZ(BlockPos pos) {
+        try {
+            return pos.getZ(); // Try direct method first
+        } catch (NoSuchMethodError e) {
+            // Fallback: Use reflection to access the field
+            try {
+                java.lang.reflect.Field field = BlockPos.class.getDeclaredField("h");
+                field.setAccessible(true);
+                return field.getInt(pos);
+            } catch (Exception ex) {
+                // Ultimate fallback: use toString parsing with correct pattern
+                String posStr = pos.toString();
+                // BlockPos.toString() format: "BlockPos{x=X, y=Y, z=Z}"
+                // Extract Z coordinate using regex
+                try {
+                    java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("z=(-?\\d+)");
+                    java.util.regex.Matcher matcher = pattern.matcher(posStr);
+                    if (matcher.find()) {
+                        return Integer.parseInt(matcher.group(1));
+                    }
+                } catch (Exception regexEx) {
+                    // If regex fails, try simple string manipulation
+                    int zIndex = posStr.indexOf("z=");
+                    if (zIndex != -1) {
+                        int braceIndex = posStr.indexOf('}', zIndex + 2);
+                        if (braceIndex != -1) {
+                            String zStr = posStr.substring(zIndex + 2, braceIndex);
+                            return Integer.parseInt(zStr.trim());
+                        }
+                    }
+                }
+                // Last resort - return 0 to prevent crash
+                return 0;
+            }
+        }
+    }
     
     // BITSET OPTIMIZATION - Compact boolean storage (87% memory reduction)
     private static final BitSet fluidProcessingFlags = new BitSet(1000); // Track processing state
@@ -505,16 +622,25 @@ public class FlowingFluidsFixesMinimal {
             
             // Get REAL MSPT from the actual Minecraft server
             try {
-                MinecraftServer server = null;
                 ServerLevel level = null;
                 
                 // Try to get the server instance from multiple sources
-                if (Minecraft.getInstance() != null && Minecraft.getInstance().getConnection() != null) {
-                    // Client side - get from integrated server
-                    server = Minecraft.getInstance().getSingleplayerServer();
-                    if (server != null) {
-                        level = server.overworld(); // Get server level
+                // Check if we're on client side before calling client methods
+                try {
+                    // Try to detect if we're on client side
+                    Class<?> minecraftClass = Class.forName("net.minecraft.client.Minecraft");
+                    if (minecraftClass != null) {
+                        // Client side - get from integrated server
+                        Object minecraftInstance = minecraftClass.getMethod("getInstance").invoke(null);
+                        if (minecraftInstance != null) {
+                            Object clientServer = minecraftInstance.getClass().getMethod("getSingleplayerServer").invoke(minecraftInstance);
+                            if (clientServer != null) {
+                                level = ((MinecraftServer) clientServer).overworld(); // Get server level
+                            }
+                        }
                     }
+                } catch (Exception e) {
+                    // Not on client side or client method failed, continue to server-side detection
                 }
                 
                 // Store server level reference for fluid counting
@@ -3036,16 +3162,83 @@ public class FlowingFluidsFixesMinimal {
                 return false; // Fast exit to prevent making lag worse
             }
             
+            // EMERGENCY MODE FOR MASSIVE FLUID CHANGES - Detect large operations
+            if (fluidCooldowns.size() > 5000) { // Too many fluids on cooldown
+                // Emergency mode - much stricter processing
+                if (cooldownExpirationsThisTick.get() >= 5) { // Only 5 expirations per tick in emergency
+                    return false;
+                }
+                // Put new fluids directly on cooldown without processing
+                if (!fluidCooldowns.containsKey(pos)) {
+                    if (fluidCooldowns.size() < MAX_COOLDOWN_FLUIDS) {
+                        fluidCooldowns.put(pos, System.currentTimeMillis());
+                    }
+                    return false;
+                }
+            }
+            
+            // OCEAN DETECTION - Special handling for large water bodies
+            // Use reflection-based coordinate access to avoid obfuscation issues
+            int posY = getBlockPosY(pos);
+            if (posY < 63) { // Ocean level detection
+                // Count nearby water blocks to detect ocean operations
+                int nearbyWaterBlocks = 0;
+                for (int dx = -2; dx <= 2; dx++) {
+                    for (int dz = -2; dz <= 2; dz++) {
+                        if (dx == 0 && dz == 0) continue;
+                        BlockPos checkPos = pos.offset(dx, 0, dz);
+                        if (level.isLoaded(checkPos)) {
+                            BlockState checkState = level.getBlockState(checkPos);
+                            if (checkState.is(Blocks.WATER)) {
+                                nearbyWaterBlocks++;
+                                if (nearbyWaterBlocks > 15) { // Likely ocean operation
+                                    // Put on extended cooldown for ocean operations
+                                    if (!fluidCooldowns.containsKey(pos) && fluidCooldowns.size() < MAX_COOLDOWN_FLUIDS) {
+                                        fluidCooldowns.put(pos, System.currentTimeMillis());
+                                    }
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
             // FLUID COOLDOWN SYSTEM - Check if this fluid is on cooldown
             Long cooldownTime = fluidCooldowns.get(pos);
             if (cooldownTime != null) {
                 // Fluid is on cooldown - check if cooldown has expired
-                if (System.currentTimeMillis() - cooldownTime < FLUID_COOLDOWN_DURATION) {
+                long timeSinceCooldown = System.currentTimeMillis() - cooldownTime;
+                if (timeSinceCooldown < FLUID_COOLDOWN_DURATION) {
                     return false; // Fluid still on cooldown
                 } else {
-                    // Cooldown expired - remove from cooldown list
+                    // RATE LIMITING - Check if we've exceeded expirations this tick
+                    long currentTickTime = System.currentTimeMillis();
+                    if (currentTickTime - lastTickReset > 50) { // Reset every 50ms (1 tick)
+                        cooldownExpirationsThisTick.set(0);
+                        lastTickReset = currentTickTime;
+                    }
+                    
+                    if (cooldownExpirationsThisTick.get() >= MAX_COOLDOWN_EXPIRATIONS_PER_TICK) {
+                        // Too many expirations this tick - keep this fluid on cooldown
+                        return false; 
+                    }
+                    
+                    // STAGGERED COOLDOWN EXPIRATION - Prevent processing storms
+                    // Use position-based stagger to spread out expirations
+                    long staggerDelay = (pos.getX() + pos.getY() + pos.getZ()) % 1000; // 0-999ms stagger
+                    if (timeSinceCooldown < FLUID_COOLDOWN_DURATION + staggerDelay) {
+                        return false; // Fluid still in staggered cooldown
+                    }
+                    
+                    // Cooldown expired - remove from cooldown list and count expiration
                     fluidCooldowns.remove(pos);
-                    System.out.println("[FLUID COOLDOWN] Cooldown expired - fluid can attempt to flow again at " + pos);
+                    cooldownExpirationsThisTick.incrementAndGet();
+                    
+                    // Only log occasionally to reduce spam
+                    if (cooldownExpirationsThisTick.get() % 25 == 0) {
+                        System.out.println("[FLUID COOLDOWN] Processed " + cooldownExpirationsThisTick.get() + "/" + MAX_COOLDOWN_EXPIRATIONS_PER_TICK + " expirations this tick - remaining: " + fluidCooldowns.size());
+                    }
                 }
             }
             
