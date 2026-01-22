@@ -226,8 +226,8 @@ public class FlowingFluidsFixesMinimal {
                 cleanupExpiredCaches();
             }
             
-            // Clean up fluid state caches more frequently
-            if (System.currentTimeMillis() % 2000 < 100) { // Every 2 seconds
+            // AGGRESSIVE: Clean up fluid state caches more frequently to prevent memory leaks
+            if (System.currentTimeMillis() % 1000 < 100) { // Every 1 second (was 2 seconds)
                 cleanupExpiredStateCaches();
             }
             
@@ -269,6 +269,9 @@ public class FlowingFluidsFixesMinimal {
                 if (pos != null) {
                     blockStateCache.remove(pos);
                     fluidStateCache.remove(pos);
+                    // CRITICAL: Also clean up fluid change tracking
+                    lastKnownFluidState.remove(pos);
+                    fluidChangeTimestamps.remove(pos);
                 }
                 return true;
             }
@@ -282,13 +285,36 @@ public class FlowingFluidsFixesMinimal {
             
             // Remove oldest entries from both caches separately
             blockStateCache.entrySet().removeIf(entry -> {
+                // CRITICAL: Also clean up fluid change tracking
+                lastKnownFluidState.remove(entry.getKey());
+                fluidChangeTimestamps.remove(entry.getKey());
                 return excess > 0;
             });
             
             // Recalculate for fluid cache
             final int fluidExcess = fluidStateCache.size() - MAX_CACHE_SIZE + 1000;
             fluidStateCache.entrySet().removeIf(entry -> {
+                // CRITICAL: Also clean up fluid change tracking
+                lastKnownFluidState.remove(entry.getKey());
+                fluidChangeTimestamps.remove(entry.getKey());
                 return fluidExcess > 0;
+            });
+        }
+        
+        // AGGRESSIVE: Clean up fluid change tracking to prevent memory leaks
+        if (lastKnownFluidState.size() > MAX_CACHE_SIZE) {
+            final int excess = lastKnownFluidState.size() - MAX_CACHE_SIZE + 1000;
+            lastKnownFluidState.entrySet().removeIf(entry -> {
+                fluidChangeTimestamps.remove(entry.getKey());
+                return excess > 0;
+            });
+        }
+        
+        if (fluidChangeTimestamps.size() > MAX_CACHE_SIZE) {
+            final int excess = fluidChangeTimestamps.size() - MAX_CACHE_SIZE + 1000;
+            fluidChangeTimestamps.entrySet().removeIf(entry -> {
+                lastKnownFluidState.remove(entry.getKey());
+                return excess > 0;
             });
         }
         
@@ -314,7 +340,7 @@ public class FlowingFluidsFixesMinimal {
         msptHistory[historyIndex] = cachedMSPT;
         
         // Calculate optimization effectiveness
-        int totalOperations = totalFluidEvents.get();
+        int totalOperations = totalFluidEvents.get() + skippedFluidEvents.get() + skippedWorldwideOps.get() + throttledOperations.get();
         int skippedOps = skippedFluidEvents.get() + skippedWorldwideOps.get() + throttledOperations.get();
         double effectiveness = (totalOperations > 0) ? ((skippedOps * 100.0) / Math.max(totalOperations, 1)) : 0.0;
         optimizationHistory[historyIndex] = effectiveness;
@@ -934,7 +960,123 @@ public class FlowingFluidsFixesMinimal {
         return expiry == null || System.currentTimeMillis() > expiry;
     }
     
+    // EVENT PREVENTION: Stop Flowing Fluids from generating millions of events
+    private static boolean shouldAllowFluidUpdates(ServerLevel level) {
+        if (!spatialOptimizationActive) {
+            return true; // Allow all updates when disabled
+        }
+        
+        // AGGRESSIVE: Completely stop fluid updates during extreme MSPT
+        if (cachedMSPT > 50.0) {
+            return false; // NO FLUID UPDATES AT ALL
+        }
+        
+        // HIGH: Severely limit fluid updates during high MSPT
+        if (cachedMSPT > 30.0) {
+            // Only allow 1% of normal fluid updates
+            return Math.random() > 0.99;
+        }
+        
+        // MODERATE: Limit fluid updates during medium MSPT
+        if (cachedMSPT > 20.0) {
+            // Only allow 10% of normal fluid updates
+            return Math.random() > 0.90;
+        }
+        
+        // LOW: Slight limitation during mild MSPT
+        if (cachedMSPT > 15.0) {
+            // Only allow 50% of normal fluid updates
+            return Math.random() > 0.50;
+        }
+        
+        return true; // Allow all updates during normal MSPT
+    }
+    
+    // EVENT PREVENTION: Check if we should allow fluid processing at this position
+    public static boolean shouldAllowFluidProcessingAt(ServerLevel level, BlockPos pos) {
+        if (!shouldAllowFluidUpdates(level)) {
+            return false; // Global throttling active
+        }
+        
+        // SPATIAL: Only process fluids near players during high MSPT
+        if (cachedMSPT > 25.0) {
+            // Check if any players are nearby (within 32 blocks)
+            for (net.minecraft.server.level.ServerPlayer player : level.players()) {
+                double dx = player.getX() - pos.getX();
+                double dy = player.getY() - pos.getY();
+                double dz = player.getZ() - pos.getZ();
+                double distanceSq = dx*dx + dy*dy + dz*dz;
+                
+                if (distanceSq <= 32*32) { // 32 blocks = 1024 distance squared
+                    return true; // Player nearby, allow processing
+                }
+            }
+            return false; // No players nearby, skip processing
+        }
+        
+        return true; // Allow processing
+    }
+    
     // FLUID STATE CACHING - Core optimization methods
+    // REAL MSPT IMPROVEMENT: Throttle fluid operations during high MSPT
+    public static boolean shouldSkipFluidOperation(ServerLevel level, BlockPos pos) {
+        if (!spatialOptimizationActive) {
+            return false; // Don't skip if optimization is disabled
+        }
+        
+        // Skip operations during extreme MSPT
+        if (cachedMSPT > 50.0) {
+            // During extreme lag, skip most fluid operations
+            return Math.random() > 0.05; // Only 5% of fluid operations allowed
+        } else if (cachedMSPT > 30.0) {
+            // During high lag, skip many fluid operations
+            return Math.random() > 0.15; // Only 15% of fluid operations allowed
+        } else if (cachedMSPT > 20.0) {
+            // During moderate lag, skip some fluid operations
+            return Math.random() > 0.5; // Only 50% of fluid operations allowed
+        }
+        
+        // During normal MSPT, don't skip fluid operations
+        return false;
+    }
+    
+    // REAL MSPT IMPROVEMENT: Throttle block operations during high MSPT
+    public static boolean shouldSkipBlockOperation(ServerLevel level, BlockPos pos) {
+        if (!spatialOptimizationActive) {
+            return false; // Don't skip if optimization is disabled
+        }
+        
+        // Skip operations during extreme MSPT
+        if (cachedMSPT > 50.0) {
+            // During extreme lag, skip most operations
+            return Math.random() > 0.1; // Only 10% of operations allowed
+        } else if (cachedMSPT > 30.0) {
+            // During high lag, skip some operations
+            return Math.random() > 0.3; // Only 70% of operations allowed
+        } else if (cachedMSPT > 20.0) {
+            // During moderate lag, skip few operations
+            return Math.random() > 0.8; // Only 80% of operations allowed
+        }
+        
+        // During normal MSPT, don't skip
+        return false;
+    }
+    
+    // REAL MSPT IMPROVEMENT: Provide cheap fallback for skipped operations
+    public static BlockState getFallbackBlockState(ServerLevel level, BlockPos pos) {
+        // Return a simple, cheap BlockState that doesn't require world access
+        // This avoids expensive LevelChunk/PalettedContainer operations
+        
+        // For fluid positions, return air to prevent fluid processing
+        if (level.isLoaded(pos)) {
+            // Quick check without expensive operations
+            return net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
+        }
+        
+        // For unloaded chunks, return bedrock (safe default)
+        return net.minecraft.world.level.block.Blocks.BEDROCK.defaultBlockState();
+    }
+    
     public static BlockState getCachedBlockState(Level level, BlockPos pos) {
         if (!spatialOptimizationActive) {
             return level.getBlockState(pos); // Fallback to direct access
@@ -990,6 +1132,12 @@ public class FlowingFluidsFixesMinimal {
         if (lastKnown != null && currentFluid.equals(lastKnown)) {
             // Fluid state unchanged - skip processing immediately
             unchangedFluidSkips.incrementAndGet();
+            // CRITICAL: Cache the unchanged state before returning!
+            if (fluidStateCache.size() < MAX_CACHE_SIZE) {
+                blockStateCache.put(pos, state);
+                fluidStateCache.put(pos, currentFluid);
+                stateCacheExpiryTimes.put(getPosKey(pos), System.currentTimeMillis() + STATE_CACHE_DURATION);
+            }
             return currentFluid;
         }
         
@@ -997,6 +1145,12 @@ public class FlowingFluidsFixesMinimal {
         Long lastChangeTime = fluidChangeTimestamps.get(pos);
         if (lastChangeTime != null && (System.currentTimeMillis() - lastChangeTime) < FLUID_CHANGE_TIMEOUT) {
             // Fluid changed recently - use current state
+            // CRITICAL: Cache the recent state before returning!
+            if (fluidStateCache.size() < MAX_CACHE_SIZE) {
+                blockStateCache.put(pos, state);
+                fluidStateCache.put(pos, currentFluid);
+                stateCacheExpiryTimes.put(getPosKey(pos), System.currentTimeMillis() + STATE_CACHE_DURATION);
+            }
             return currentFluid;
         }
         
