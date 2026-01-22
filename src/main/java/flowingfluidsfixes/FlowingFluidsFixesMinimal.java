@@ -26,10 +26,16 @@ import java.util.Set;
 public class FlowingFluidsFixesMinimal {
     public static final String MOD_ID = "flowingfluidsfixes";
     
-    // Performance tracking
+    // PERFORMANCE TRACKING - Track optimization metrics
     private static final AtomicInteger totalFluidEvents = new AtomicInteger(0);
     private static final AtomicInteger skippedFluidEvents = new AtomicInteger(0);
     private static final AtomicInteger eventsThisTick = new AtomicInteger(0);
+    
+    // OCEAN DRAINAGE EMERGENCY MODE - Detect massive fluid cascades
+    private static final AtomicInteger fluidEventsInLastSecond = new AtomicInteger(0);
+    private static final AtomicInteger maxEventsPerSecond = new AtomicInteger(0);
+    private static long lastCascadeCheck = 0;
+    private static boolean oceanDrainageEmergencyMode = false;
     
     // GLOBAL SPATIAL OPTIMIZATION - Address worldwide MSPT bottlenecks
     private static final AtomicInteger entityDataOpsThisTick = new AtomicInteger(0);
@@ -1013,6 +1019,9 @@ public class FlowingFluidsFixesMinimal {
         // ALWAYS COUNT TOTAL EVENTS for proper effectiveness calculation
         totalFluidEvents.incrementAndGet();
         
+        // OCEAN DRAINAGE EMERGENCY MODE - Detect massive fluid cascades
+        detectOceanDrainageEmergency();
+        
         if (!shouldAllowFluidUpdates(level)) {
             shouldAllow = false; // Global throttling active
         } else {
@@ -1054,12 +1063,48 @@ public class FlowingFluidsFixesMinimal {
             }
         }
         
+        // OCEAN DRAINAGE EMERGENCY MODE - Ultra-aggressive filtering during massive cascades
+        if (oceanDrainageEmergencyMode) {
+            // During ocean drainage, allow only 0.01% of fluid updates
+            shouldAllow = Math.random() < 0.0001;
+        }
+        
         // UPDATE COUNTERS for event prevention
         if (!shouldAllow) {
             skippedFluidEvents.incrementAndGet();
         }
         
         return shouldAllow;
+    }
+    
+    // OCEAN DRAINAGE EMERGENCY MODE - Detect massive fluid cascades
+    private static void detectOceanDrainageEmergency() {
+        long currentTime = System.currentTimeMillis();
+        
+        // Reset counter every second
+        if (currentTime - lastCascadeCheck > 1000) {
+            int eventsThisSecond = fluidEventsInLastSecond.get();
+            maxEventsPerSecond.set(Math.max(maxEventsPerSecond.get(), eventsThisSecond));
+            
+            // Check for ocean drainage emergency (more than 50,000 events per second)
+            if (eventsThisSecond > 50000) {
+                oceanDrainageEmergencyMode = true;
+                System.out.println("[FlowingFluidsFixes] ⚠️ OCEAN DRAINAGE EMERGENCY MODE ACTIVATED!");
+                System.out.println("[FlowingFluidsFixes] Massive fluid cascade detected: " + eventsThisSecond + " events/second");
+                System.out.println("[FlowingFluidsFixes] Ultra-aggressive filtering: 0.01% fluid processing allowed");
+            } else if (eventsThisSecond < 10000) {
+                // Deactivate emergency mode when cascade subsides
+                if (oceanDrainageEmergencyMode) {
+                    oceanDrainageEmergencyMode = false;
+                    System.out.println("[FlowingFluidsFixes] ✅ Ocean drainage emergency mode deactivated");
+                }
+            }
+            
+            fluidEventsInLastSecond.set(0);
+            lastCascadeCheck = currentTime;
+        }
+        
+        fluidEventsInLastSecond.incrementAndGet();
     }
     
     // FLUID STATE CACHING - Core optimization methods
