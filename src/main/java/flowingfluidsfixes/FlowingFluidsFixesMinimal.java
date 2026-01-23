@@ -570,10 +570,11 @@ public class FlowingFluidsFixesMinimal {
         reflectionInitialized = true;
     }
     
-    // AGGRESSIVE WORLD ACCESS INTERCEPTION - Directly blocks Flowing Fluids operations
+    // AGGRESSIVE WORLD ACCESS INTERCEPTION - Directly blocks Flowing Fluids operations (SERVER SIDE ONLY)
     @SubscribeEvent
     public void onLevelTick(TickEvent.LevelTickEvent event) {
-        if (event.level instanceof ServerLevel) {
+        // ONLY apply throttling on server side to prevent client issues
+        if (event.level instanceof ServerLevel && !event.level.isClientSide()) {
             // Apply aggressive throttling to ALL level operations
             double throttleFactor = getSmoothThrottleFactor();
             if (Math.random() > throttleFactor) {
@@ -587,7 +588,8 @@ public class FlowingFluidsFixesMinimal {
     
     @SubscribeEvent
     public void onChunkLoad(LevelEvent.Load event) {
-        if (blockLevelOperations) {
+        // ONLY block chunk loading on server side
+        if (blockLevelOperations && event.getLevel() instanceof ServerLevel && !event.getLevel().isClientSide()) {
             event.setCanceled(true); // Block chunk loading during high throttling
             skippedFluidEvents.incrementAndGet();
             return;
@@ -596,18 +598,19 @@ public class FlowingFluidsFixesMinimal {
     
     @SubscribeEvent
     public void onChunkUnload(LevelEvent.Unload event) {
-        if (blockLevelOperations) {
+        // ONLY block chunk unloading on server side
+        if (blockLevelOperations && event.getLevel() instanceof ServerLevel && !event.getLevel().isClientSide()) {
             event.setCanceled(true); // Block chunk unloading during high throttling
             skippedFluidEvents.incrementAndGet();
             return;
         }
     }
     
-    // REAL FLUID INTERCEPTION - Block event based throttling that actually works
+    // REAL FLUID INTERCEPTION - Block event based throttling (SERVER SIDE ONLY)
     @SubscribeEvent
     public void onBlockPlace(BlockEvent.EntityPlaceEvent event) {
-        // Apply smooth mathematical throttling to ALL block placements
-        if (event.getLevel() instanceof ServerLevel) {
+        // ONLY apply throttling on server side to prevent client issues
+        if (event.getLevel() instanceof ServerLevel && !event.getLevel().isClientSide()) {
             BlockPos pos = event.getPos();
             
             // Apply aggressive throttling
@@ -629,8 +632,8 @@ public class FlowingFluidsFixesMinimal {
     
     @SubscribeEvent
     public void onBlockUpdate(BlockEvent.NeighborNotifyEvent event) {
-        // Apply throttling to neighbor updates (fluid flow triggers these)
-        if (event.getLevel() instanceof ServerLevel) {
+        // ONLY apply throttling on server side to prevent client issues
+        if (event.getLevel() instanceof ServerLevel && !event.getLevel().isClientSide()) {
             // Apply aggressive throttling to neighbor updates
             double throttleFactor = getSmoothThrottleFactor();
             if (Math.random() > throttleFactor) {
@@ -641,10 +644,11 @@ public class FlowingFluidsFixesMinimal {
         }
     }
     
-    // AGGRESSIVE FLUID BLOCKING - Direct fluid state interception
+    // AGGRESSIVE FLUID BLOCKING - Direct fluid state interception (SERVER SIDE ONLY)
     @SubscribeEvent
     public void onFluidTick(TickEvent.LevelTickEvent event) {
-        if (event.level instanceof ServerLevel) {
+        // ONLY apply throttling on server side to prevent client issues
+        if (event.level instanceof ServerLevel && !event.level.isClientSide()) {
             // Apply aggressive throttling during fluid ticks
             double throttleFactor = getSmoothThrottleFactor();
             if (Math.random() > throttleFactor) {
