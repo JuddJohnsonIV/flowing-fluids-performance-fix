@@ -1,6 +1,6 @@
 {
   "required": true,
-  "package": "flowingfluidsfixes.mixins",
+  "package": "flowingfluidsfixes.mixin",
   "compatibilityLevel": "JAVA_17",
   "minVersion": "0.8",
   "client": [],
@@ -8,7 +8,9 @@
     "BucketInteractionControl",
     "FlowingFluidsDirectControl",
     "FluidTickControl",
-    "PlayerFluidInteraction"
+    "PlayerFluidInteraction",
+    "FluidRandomTickMixin",
+    "BlockStateNeighborUpdateMixin"
   ],
   "injectors": {
     "defaultRequire": 1

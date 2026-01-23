@@ -3,12 +3,9 @@ package flowingfluidsfixes;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.MinecraftServer;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -22,12 +19,12 @@ import net.minecraftforge.common.MinecraftForge;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Set;
 import java.util.Map;
 import java.util.BitSet;
-import java.util.function.Supplier;
 import net.minecraft.server.level.ServerPlayer;
 import java.lang.reflect.Method;
 
@@ -36,8 +33,8 @@ public class FlowingFluidsFixesMinimal {
     public static final String MOD_ID = "flowingfluidsfixes";
     
     // PERFORMANCE TRACKING - Track optimization metrics
-    private static final AtomicInteger totalFluidEvents = new AtomicInteger(0);
-    private static final AtomicInteger skippedFluidEvents = new AtomicInteger(0);
+    public static final AtomicInteger totalFluidEvents = new AtomicInteger(0);
+    public static final AtomicInteger skippedFluidEvents = new AtomicInteger(0);
     private static final AtomicInteger eventsThisTick = new AtomicInteger(0);
     
     // SPATIAL OPTIMIZATION - Track chunk-based operations
@@ -49,8 +46,7 @@ public class FlowingFluidsFixesMinimal {
     private static final AtomicInteger skippedWorldwideOps = new AtomicInteger(0);
     
     // RIVER FLOW OPTIMIZATION - Priority-based processing for long-distance fluid flow
-    private static final ConcurrentHashMap<Long, Integer> fluidFlowPriority = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<Long, Long> riverSourceBlocks = new ConcurrentHashMap<>();
+    // Now using UnifiedCacheManager for consolidated storage
     private static final AtomicInteger riverFlowOperations = new AtomicInteger(0);
     private static final AtomicInteger riverFlowSkipped = new AtomicInteger(0);
     
@@ -102,18 +98,13 @@ public class FlowingFluidsFixesMinimal {
     
     // Spatial optimization state
     private static boolean spatialOptimizationActive = false;
-    private static double cachedMSPT = 5.0;
+    public static double cachedMSPT = 5.0; // Made public for EntityProcessingOptimizer access
     private static long lastTickTime = 0;
     
-    // Player proximity cache for spatial optimization
-    private static final ConcurrentHashMap<Long, Boolean> playerNearbyChunks = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<Long, Long> chunkExpiryTimes = new ConcurrentHashMap<>();
+    // Player proximity cache for spatial optimization - Now using UnifiedCacheManager
     private static final long CHUNK_CACHE_DURATION = 5000; // 5 seconds
     
-    // SPATIAL PARTITIONING - Chunk-based fluid processing optimization
-    private static final ConcurrentHashMap<Long, List<BlockPos>> chunkFluidGroups = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<Long, Integer> chunkProcessingPriority = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<Long, Long> chunkLastProcessed = new ConcurrentHashMap<>();
+    // SPATIAL PARTITIONING - Chunk-based fluid processing optimization - Now using UnifiedCacheManager
     private static final long CHUNK_PROCESSING_COOLDOWN = 1000; // 1 second between chunk processing
     
     // Spatial partitioning performance tracking
@@ -127,24 +118,119 @@ public class FlowingFluidsFixesMinimal {
     private static final AtomicInteger throttledOperations = new AtomicInteger(0);
     private static final AtomicInteger allowedOperations = new AtomicInteger(0);
     
-    // AGGRESSIVE WORLD ACCESS BLOCKING - Direct level operation interception
-    private static volatile boolean blockLevelOperations = false;
+    // UNIFIED THROTTLING DECISION ENGINE - Now using UnifiedCacheManager
+    private static long lastThrottlingUpdate = 0;
+    private static final long THROTTLING_CACHE_DURATION = 50; // Cache for 50ms
     
-    // SMOOTH MATHEMATICAL THROTTLING - AGGRESSIVE for Flowing Fluids compatibility
-    private static double currentThrottleLevel = 0.0; // 1.0 = full throttling, 0.0 = no throttling
-    private static long lastThrottleAdjustment = 0;
-    private static final long THROTTLE_ADJUSTMENT_INTERVAL = 100; // Adjust every 100ms for faster response
-    private static double msptMovingAverage = 15.0; // Moving average for smooth MSPT tracking
-    private static final double MSPT_ALPHA = 0.1; // Faster response (10% new, 90% old)
-    private static final double TARGET_MSPT = 10.0; // Lower target for better performance
-    private static final double SMOOTHING_FACTOR = 0.6; // More responsive (0.6 = responsive)
-    private static final double RESPONSE_SENSITIVITY = 0.3; // More responsive to MSPT changes
+    // Single throttling decision that covers ALL scenarios
+    private static class ThrottlingDecision {
+        final boolean shouldBlockLevelOps;
+        final boolean shouldBlockFluidOps;
+        final boolean shouldBlockBlockOps;
+        final boolean shouldBlockEntityOps;
+        final boolean shouldBlockChunkOps;
+        final boolean shouldUseSpatialOptimization;
+        final int processingInterval;
+        final long decisionTime;
+        
+        ThrottlingDecision(double mspt, long currentTime) {
+            this.decisionTime = currentTime;
+            
+            // UNIFIED DECISION LOGIC - Calculate everything once
+            if (mspt > 40.0) {
+                // EMERGENCY: Block everything
+                shouldBlockLevelOps = true;
+                shouldBlockFluidOps = true;
+                shouldBlockBlockOps = true;
+                shouldBlockEntityOps = true;
+                shouldBlockChunkOps = true;
+                shouldUseSpatialOptimization = true;
+                processingInterval = 10; // Only process 1 in 10
+            } else if (mspt > 25.0) {
+                // HIGH LOAD: Block most things, allow some near players
+                shouldBlockLevelOps = true;
+                shouldBlockFluidOps = true;
+                shouldBlockBlockOps = false; // Allow some block ops
+                shouldBlockEntityOps = false; // Allow entities near players
+                shouldBlockChunkOps = true;
+                shouldUseSpatialOptimization = true;
+                processingInterval = 4; // Process 1 in 4
+            } else if (mspt > 15.0) {
+                // MODERATE LOAD: Block some things
+                shouldBlockLevelOps = false;
+                shouldBlockFluidOps = true;
+                shouldBlockBlockOps = false;
+                shouldBlockEntityOps = false;
+                shouldBlockChunkOps = false;
+                shouldUseSpatialOptimization = true;
+                processingInterval = 2; // Process 1 in 2
+            } else {
+                // NORMAL: Allow everything
+                shouldBlockLevelOps = false;
+                shouldBlockFluidOps = false;
+                shouldBlockBlockOps = false;
+                shouldBlockEntityOps = false;
+                shouldBlockChunkOps = false;
+                shouldUseSpatialOptimization = false;
+                processingInterval = 1; // Process everything
+            }
+        }
+        
+        // Unified decision for any type of operation - BLOCKS MULTIPLE OVERLOADS
+        boolean shouldProcess(OperationType type, BlockPos pos, long tick) {
+            // OVERLOAD 1: Time-based throttling
+            if ((tick % processingInterval) != 0) {
+                return false; // BLOCKED: Time overload
+            }
+            
+            // OVERLOAD 2: Spatial optimization
+            if (shouldUseSpatialOptimization && pos != null && !isWithinPlayerRadius(pos)) {
+                return false; // BLOCKED: Spatial overload
+            }
+            
+            // OVERLOAD 3: Type-specific blocking
+            switch (type) {
+                case LEVEL_OPERATIONS: return !shouldBlockLevelOps;   // BLOCKED: Level overload
+                case FLUID_OPERATIONS: return !shouldBlockFluidOps;   // BLOCKED: Fluid overload
+                case BLOCK_OPERATIONS: return !shouldBlockBlockOps;   // BLOCKED: Block overload
+                case ENTITY_OPERATIONS: return !shouldBlockEntityOps; // BLOCKED: Entity overload
+                case CHUNK_OPERATIONS: return !shouldBlockChunkOps;   // BLOCKED: Chunk overload
+                default: return true;
+            }
+        }
+    }
     
-    // AGGRESSIVE Mathematical function parameters for Flowing Fluids
-    private static final double THROTTLE_CURVE_STEEPNESS = 4.0; // Steeper S-curve for stronger response
-    private static final double THROTTLE_CURVE_MIDPOINT = 15.0; // MSPT where throttling is 50%
-    private static final double MIN_THROTTLE = 0.0; // Minimum throttling (0% = no throttling)
-    private static final double MAX_THROTTLE = 0.98; // Maximum throttling (98% = almost complete)
+    private enum OperationType {
+        LEVEL_OPERATIONS, FLUID_OPERATIONS, BLOCK_OPERATIONS, 
+        ENTITY_OPERATIONS, CHUNK_OPERATIONS
+    }
+    
+    // Get unified throttling decision (cached for performance)
+    private static ThrottlingDecision getThrottlingDecision() {
+        long currentTime = System.currentTimeMillis();
+        
+        // Check cache first
+        ThrottlingDecision cached = throttlingCache.get(currentTime / THROTTLING_CACHE_DURATION);
+        if (cached != null) {
+            return cached;
+        }
+        
+        // Calculate new decision
+        ThrottlingDecision decision = new ThrottlingDecision(cachedMSPT, currentTime);
+        
+        // Cache it
+        throttlingCache.put(currentTime / THROTTLING_CACHE_DURATION, decision);
+        
+        // Clean old cache entries
+        if (currentTime - lastThrottlingUpdate > 1000) { // Clean every second
+            throttlingCache.entrySet().removeIf(entry -> 
+                currentTime - entry.getValue().decisionTime > 2000);
+            lastThrottlingUpdate = currentTime;
+        }
+        
+        return decision;
+    }
+    // SIMPLE MSPT-BASED THROTTLING - Replaced complex mathematical system
     
     // PREVENTIVE FLUID MANAGEMENT - Stop issues before they start
     private static final ConcurrentHashMap<Long, Integer> fluidPressureMap = new ConcurrentHashMap<>();
@@ -331,7 +417,7 @@ public class FlowingFluidsFixesMinimal {
     
     // EVENT RATE LIMITING - Prevent system overload
     private static final int MAX_EVENTS_PER_TICK = 100; // Maximum events to process per tick
-    private static final int MAX_EVENTS_PER_SECOND = 1000; // Maximum events per second
+    private static int MAX_EVENTS_PER_SECOND = 1000; // Maximum events per second (modifiable for testing)
     private static long eventsThisSecond = 0;
     private static long lastSecondReset = System.currentTimeMillis();
     
@@ -339,16 +425,10 @@ public class FlowingFluidsFixesMinimal {
     private static final ConcurrentHashMap<BlockPos, Long> pausedFluids = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<BlockPos, Long> fluidCooldowns = new ConcurrentHashMap<>(); // NEW: Cooldown tracking
     private static final long FLUID_PAUSE_DURATION = 5000; // 5 seconds pause for individual fluids
-    private static final long FLUID_COOLDOWN_DURATION = 5000; // INCREASED: 5 seconds cooldown for large operations
     private static final int MAX_PAUSED_FLUIDS = 5000; // REDUCED from 10000 to prevent memory issues
     private static final int MAX_COOLDOWN_FLUIDS = 10000; // Maximum cooldowns to track
     private static long lastPauseCleanup = System.currentTimeMillis();
     private static final long PAUSE_CLEANUP_INTERVAL = 30000; // Clean up every 30 seconds
-    
-    // COOLDOWN RATE LIMITING - Prevent processing storms
-    private static final AtomicInteger cooldownExpirationsThisTick = new AtomicInteger(0);
-    private static final int MAX_COOLDOWN_EXPIRATIONS_PER_TICK = 25; // REDUCED: Stricter limit for large operations
-    private static long lastTickReset = System.currentTimeMillis();
     
     // REMOVED: BlockPos helper methods - use direct calls for zero latency
     // pos.getX(), pos.getY(), pos.getZ() are the correct methods for Minecraft 1.20.1
@@ -570,60 +650,67 @@ public class FlowingFluidsFixesMinimal {
         reflectionInitialized = true;
     }
     
-    // AGGRESSIVE WORLD ACCESS INTERCEPTION - Directly blocks Flowing Fluids operations (SERVER SIDE ONLY)
+    // UNIFIED EVENT HANDLING - Single decision engine for all throttling
     @SubscribeEvent
     public void onLevelTick(TickEvent.LevelTickEvent event) {
-        // ONLY apply throttling on server side to prevent client issues
         if (event.level instanceof ServerLevel && !event.level.isClientSide()) {
-            // Apply aggressive throttling to ALL level operations
-            double throttleFactor = getSmoothThrottleFactor();
-            if (Math.random() > throttleFactor) {
-                // Set a flag to block all subsequent operations in this tick
-                blockLevelOperations = true;
-                return;
+            // Get unified throttling decision (cached for performance)
+            ThrottlingDecision decision = getThrottlingDecision();
+            long currentTick = event.level.getGameTime();
+            
+            // Apply unified decision for level operations
+            if (!decision.shouldProcess(OperationType.LEVEL_OPERATIONS, null, currentTick)) {
+                return; // Skip level operations during throttling
             }
-            blockLevelOperations = false;
         }
     }
     
     @SubscribeEvent
     public void onChunkLoad(LevelEvent.Load event) {
-        // ONLY block chunk loading on server side
-        if (blockLevelOperations && event.getLevel() instanceof ServerLevel && !event.getLevel().isClientSide()) {
-            event.setCanceled(true); // Block chunk loading during high throttling
-            skippedFluidEvents.incrementAndGet();
-            return;
+        if (event.getLevel() instanceof ServerLevel && !event.getLevel().isClientSide()) {
+            // Get unified throttling decision
+            ThrottlingDecision decision = getThrottlingDecision();
+            long currentTick = ((ServerLevel) event.getLevel()).getGameTime();
+            
+            // Apply unified decision for level operations
+            if (!decision.shouldProcess(OperationType.LEVEL_OPERATIONS, null, currentTick)) {
+                event.setCanceled(true);
+                skippedFluidEvents.incrementAndGet();
+                return;
+            }
         }
     }
     
     @SubscribeEvent
     public void onChunkUnload(LevelEvent.Unload event) {
-        // ONLY block chunk unloading on server side
-        if (blockLevelOperations && event.getLevel() instanceof ServerLevel && !event.getLevel().isClientSide()) {
-            event.setCanceled(true); // Block chunk unloading during high throttling
-            skippedFluidEvents.incrementAndGet();
-            return;
-        }
-    }
-    
-    // REAL FLUID INTERCEPTION - Block event based throttling (SERVER SIDE ONLY)
-    @SubscribeEvent
-    public void onBlockPlace(BlockEvent.EntityPlaceEvent event) {
-        // ONLY apply throttling on server side to prevent client issues
         if (event.getLevel() instanceof ServerLevel && !event.getLevel().isClientSide()) {
-            BlockPos pos = event.getPos();
+            // Get unified throttling decision
+            ThrottlingDecision decision = getThrottlingDecision();
+            long currentTick = ((ServerLevel) event.getLevel()).getGameTime();
             
-            // Apply aggressive throttling
-            double throttleFactor = getSmoothThrottleFactor();
-            if (Math.random() > throttleFactor) {
-                event.setCanceled(true); // Cancel the block placement
+            // Apply unified decision for level operations
+            if (!decision.shouldProcess(OperationType.LEVEL_OPERATIONS, null, currentTick)) {
+                event.setCanceled(true);
                 skippedFluidEvents.incrementAndGet();
                 return;
             }
+        }
+    }
+    
+    // UNIFIED FLUID INTERCEPTION - Single decision for all fluid operations
+    @SubscribeEvent
+    public void onBlockPlace(BlockEvent.EntityPlaceEvent event) {
+        if (event.getLevel() instanceof ServerLevel && !event.getLevel().isClientSide()) {
+            BlockPos pos = event.getPos();
+            ServerLevel level = (ServerLevel) event.getLevel();
             
-            // Additional spatial optimization
-            if (!isWithinPlayerRadius(pos)) {
-                event.setCanceled(true); // Skip far from players
+            // Get unified throttling decision (cached)
+            ThrottlingDecision decision = getThrottlingDecision();
+            long currentTick = level.getGameTime();
+            
+            // Apply unified decision for block operations
+            if (!decision.shouldProcess(OperationType.BLOCK_OPERATIONS, pos, currentTick)) {
+                event.setCanceled(true);
                 skippedFluidEvents.incrementAndGet();
                 return;
             }
@@ -632,26 +719,34 @@ public class FlowingFluidsFixesMinimal {
     
     @SubscribeEvent
     public void onBlockUpdate(BlockEvent.NeighborNotifyEvent event) {
-        // ONLY apply throttling on server side to prevent client issues
         if (event.getLevel() instanceof ServerLevel && !event.getLevel().isClientSide()) {
-            // Apply aggressive throttling to neighbor updates
-            double throttleFactor = getSmoothThrottleFactor();
-            if (Math.random() > throttleFactor) {
-                event.setCanceled(true); // Cancel the neighbor update
+            ServerLevel level = (ServerLevel) event.getLevel();
+            
+            // Get unified throttling decision (cached)
+            ThrottlingDecision decision = getThrottlingDecision();
+            long currentTick = level.getGameTime();
+            
+            // Apply unified decision for block operations
+            if (!decision.shouldProcess(OperationType.BLOCK_OPERATIONS, null, currentTick)) {
+                event.setCanceled(true);
                 skippedFluidEvents.incrementAndGet();
                 return;
             }
         }
     }
     
-    // AGGRESSIVE FLUID BLOCKING - Direct fluid state interception (SERVER SIDE ONLY)
+    // UNIFIED FLUID TICK HANDLING - Single decision for fluid processing
     @SubscribeEvent
     public void onFluidTick(TickEvent.LevelTickEvent event) {
-        // ONLY apply throttling on server side to prevent client issues
         if (event.level instanceof ServerLevel && !event.level.isClientSide()) {
-            // Apply aggressive throttling during fluid ticks
-            double throttleFactor = getSmoothThrottleFactor();
-            if (Math.random() > throttleFactor) {
+            ServerLevel level = (ServerLevel) event.level;
+            
+            // Get unified throttling decision (cached)
+            ThrottlingDecision decision = getThrottlingDecision();
+            long currentTick = level.getGameTime();
+            
+            // Apply unified decision for fluid operations
+            if (!decision.shouldProcess(OperationType.FLUID_OPERATIONS, null, currentTick)) {
                 // Skip processing this tick entirely
                 return;
             }
@@ -772,272 +867,60 @@ public class FlowingFluidsFixesMinimal {
         System.out.println("[FlowingFluidsFixes] Block event interception active - real fluid throttling enabled");
     }
 
-    // SMOOTH MATHEMATICAL THROTTLING - Continuous scaling functions
-    private static void updateGradualThrottling() {
-        long currentTime = System.currentTimeMillis();
-        
-        // Only adjust throttling at intervals
-        if (currentTime - lastThrottleAdjustment < THROTTLE_ADJUSTMENT_INTERVAL) {
-            return;
-        }
-        
-        lastThrottleAdjustment = currentTime;
-        
-        // Update moving average for smooth MSPT tracking
-        msptMovingAverage = (MSPT_ALPHA * cachedMSPT) + ((1.0 - MSPT_ALPHA) * msptMovingAverage);
-        
-        // Calculate target throttling using sigmoid S-curve function
-        double targetThrottle = calculateTargetThrottle(msptMovingAverage);
-        
-        // Smooth transition using exponential moving average
-        currentThrottleLevel = (SMOOTHING_FACTOR * targetThrottle) + ((1.0 - SMOOTHING_FACTOR) * currentThrottleLevel);
-        
-        // Apply bounds
-        currentThrottleLevel = Math.max(MIN_THROTTLE, Math.min(MAX_THROTTLE, currentThrottleLevel));
-        
-        // Log significant changes only
-        if (Math.abs(targetThrottle - currentThrottleLevel) > 0.05) {
-            System.out.println(String.format("[FlowingFluidsFixes] Mathematical throttling: %.1f%% (MSPT: %.1f, Target: %.1f%%)", 
-                currentThrottleLevel * 100, msptMovingAverage, targetThrottle * 100));
-        }
-    }
-    
-    // Mathematical S-curve function for smooth throttling
-    private static double calculateTargetThrottle(double mspt) {
-        // Sigmoid function: f(x) = L / (1 + e^(-k(x - x0)))
-        // Where L = max value, k = steepness, x0 = midpoint
-        
-        // Apply response sensitivity to adjust steepness based on conditions
-        double adjustedSteepness = THROTTLE_CURVE_STEEPNESS * (1.0 + RESPONSE_SENSITIVITY);
-        
-        // Normalize MSPT to 0-1 range around target
-        double normalizedMSPT = (mspt - TARGET_MSPT) / THROTTLE_CURVE_MIDPOINT;
-        
-        // Apply sigmoid function
-        double sigmoid = 1.0 / (1.0 + Math.exp(-adjustedSteepness * normalizedMSPT));
-        
-        // Scale to throttle range
-        return MIN_THROTTLE + (MAX_THROTTLE - MIN_THROTTLE) * sigmoid;
-    }
-    
-    // Get smooth throttling factor for fluid processing
-    public static double getSmoothThrottleFactor() {
-        return 1.0 - currentThrottleLevel; // Convert to processing factor (0 = no processing, 1 = full processing)
-    }
+    // REMOVED: Unused mathematical throttling system - was creating overhead without benefit
+// The simple direct MSPT-based throttling in onLevelTick() is much more efficient
 
     @SubscribeEvent
     public void onServerTick(TickEvent.ServerTickEvent event) {
         if (event.phase == TickEvent.Phase.END) {
-            // UNIFIED TIMING UPDATE - Single expensive call// Update timing with last tick time
-            timingSystem.updateTick();
-            lastTickTime = timingSystem.getCurrentTime(); // Use the field
-            
-            // Update adaptive management based on last tick time
-            if (System.currentTimeMillis() - lastTickTime > 1000) {
-                updateAdaptiveManagement();
-            }
-            
-            // Update gradual throttling release system
-            updateGradualThrottling();
-            
-            // Store server level reference for fluid counting
-            currentServerLevel = null; // Will be updated below
-            
-            // Get REAL MSPT from the actual Minecraft server
-            try {
-                ServerLevel level = null;
-                
-                // Try to get the server instance from multiple sources
-                // Check if we're on client side before calling client methods
-                try {
-                    // Try to detect if we're on client side
-                    Class<?> minecraftClass = Class.forName("net.minecraft.client.Minecraft");
-                    if (minecraftClass != null) {
-                        // Client side - get from integrated server
-                        Object minecraftInstance = minecraftClass.getMethod("getInstance").invoke(null);
-                        if (minecraftInstance != null) {
-                            Object clientServer = minecraftInstance.getClass().getMethod("getSingleplayerServer").invoke(minecraftInstance);
-                            if (clientServer != null) {
-                                level = ((MinecraftServer) clientServer).overworld(); // Get server level
-                            }
-                        }
-                    }
-                } catch (Exception e) {
-                    // Not on client side or client method failed, continue to server-side detection
+            // Update MSPT
+            long currentTime = System.currentTimeMillis();
+            if (lastTickTime > 0) {
+                long tickDuration = currentTime - lastTickTime;
+                recentTickTimes.add(tickDuration);
+                if (recentTickTimes.size() > 100) {
+                    recentTickTimes.remove(0);
                 }
                 
-                // Store server level reference for fluid counting
-                currentServerLevel = level;
+                // Calculate rolling average MSPT
+                long totalTickTime = 0;
+                for (long time : recentTickTimes) {
+                    totalTickTime += time;
+                }
+                cachedMSPT = (double) totalTickTime / recentTickTimes.size();
                 
-                // MSPT is now calculated in timingSystem.updateTick()
-                // No need for duplicate calculation here
-            } catch (Exception e) {
-                // Ultimate fallback - use last known MSPT or conservative estimate
-                if (cachedMSPT <= 0.0) {
-                    cachedMSPT = 50.0; // Conservative fallback for high load
+                // Update global fluid tick throttling (critical for ocean drains)
+                updateGlobalFluidTickThrottling();
+                
+                // Update neighbor update blocking (prevent cascading failures)
+                updateNeighborUpdateBlocking();
+                
+                // Update spatial partitioning system (chunk-based processing)
+                updateSpatialPartitioning();
+                
+                // Simple MSPT-based emergency mode detection (moved from per-event)
+                if (cachedMSPT > 30.0 && !inEmergencyMode) {
+                    inEmergencyMode = true;
+                    System.out.println("[FLOWING FLUIDS EMERGENCY] High MSPT detected: " + String.format("%.1f", cachedMSPT) + "ms - Emergency mode activated");
+                } else if (cachedMSPT < 15.0 && inEmergencyMode) {
+                    inEmergencyMode = false;
+                    System.out.println("[FLOWING FLUIDS RECOVERY] MSPT normalized: " + String.format("%.1f", cachedMSPT) + "ms - Emergency mode ended");
+                }
+                
+                // Move expensive emergency detection here (once per second, not per event)
+                if (currentTime - lastCascadeCheck > 1000) {
+                    detectOceanDrainageEmergency();
+                    lastCascadeCheck = currentTime;
                 }
             }
-            
-            // UNIFIED PERFORMANCE TRACKING - Use timing system to prevent overload
-            if (timingSystem.shouldUpdateMSPT()) {
-                updatePerformanceHistory();
-                updateSmoothMSPT();
-                timingSystem.markMSPTUpdated();
-            }
-            
-            if (timingSystem.shouldReport()) {
-                generatePerformanceReport();
-                timingSystem.markReportDone();
-            }
+            lastTickTime = currentTime;
             
             // Reset per-tick counters
             eventsThisTick.set(0);
+            operationsThisTick.set(0);
             entityDataOpsThisTick.set(0);
             neighborUpdateOpsThisTick.set(0);
             entitySectionOpsThisTick.set(0);
-            
-            // Reset chunk counters
-            chunksProcessedThisTick.set(0);
-            chunksSkippedThisTick.set(0);
-            
-            // Use timing system methods
-            if (timingSystem.shouldProcessBatch()) {
-                spatialOperations.incrementAndGet();
-                timingSystem.markBatchProcessed();
-            }
-            
-            if (timingSystem.shouldResetEntityCounters()) {
-                timingSystem.markEntityCountersReset();
-            }
-            
-            // Update timing
-            lastTickTime = timingSystem.getCurrentTime(); // Use the field
-            
-            // Reset river flow operations counter
-            riverFlowOperations.set(0);
-            
-            // UNIFIED CLEANUP - Use timing system intervals
-            if (timingSystem.shouldCleanup()) {
-                cleanupExpiredCaches();
-                timingSystem.markCleanupDone();
-            }
-            
-            // AGGRESSIVE: Clean up fluid state caches more frequently to prevent memory leaks
-            if (timingSystem.shouldCleanCache()) {
-                cleanupExpiredStateCaches();
-                cleanupOldWorldChanges(); // Clean up old world change tracking
-                timingSystem.markCacheCleanDone();
-            }
-            
-            // PREVENTIVE FLUID MANAGEMENT - Update adaptive systems
-            updateAdaptiveThresholds();
-            
-            // SPARK PROFILE EMERGENCY THROTTLING - With hysteresis to prevent rapid cycling
-            long currentTime = System.currentTimeMillis();
-            
-            // Check if we should exit emergency mode (with hysteresis)
-            if (inEmergencyMode && (currentTime - lastEmergencyTime) > emergencyDuration) {
-                // OPTIMIZED: Use lookup table instead of if-statement
-                if (getMSPTAction(cachedMSPT) <= 2) { // 2 = critical threshold action
-                    inEmergencyMode = false;
-                    acceptNewFluids = true; // Re-enable new fluid acceptance
-                    adaptiveThrottleLevel = 2; // Moderate throttling on recovery
-                    System.out.println("[FLOWING FLUIDS RECOVERY] Emergency mode ended - accepting new fluids - MSPT: " + cachedMSPT);
-                }
-            }
-            
-            // Check if we should exit aggressive mode (with hysteresis)
-            if (inAggressiveMode && !inEmergencyMode && (currentTime - lastAggressiveTime) > aggressiveDuration) {
-                // OPTIMIZED: Use lookup table instead of if-statement
-                if (getMSPTAction(cachedMSPT) <= 1) { // 1 = warning threshold action
-                    inAggressiveMode = false;
-                    acceptNewFluids = true; // Re-enable new fluid acceptance
-                    adaptiveThrottleLevel = 1; // Light throttling on recovery
-                    System.out.println("[FLOWING FLUIDS RECOVERY] Aggressive throttling ended - accepting new fluids - MSPT: " + cachedMSPT);
-                }
-            }
-            
-            // SMOOTH MATHEMATICAL THROTTLING - Replace hard emergency modes with continuous scaling
-            // The smooth throttling system handles all MSPT adjustments automatically
-            // No need for hard emergency mode thresholds - use mathematical scaling instead
-            
-            // Only log significant throttling changes
-            if (currentThrottleLevel > 0.8 && !inEmergencyMode) {
-                inEmergencyMode = true;
-                System.out.println("[FLOWING FLUIDS EMERGENCY] High throttling activated - MSPT: " + String.format("%.1f", msptMovingAverage) + " (Throttle: " + String.format("%.0f%%", currentThrottleLevel * 100) + ")");
-            } else if (currentThrottleLevel < 0.3 && inEmergencyMode) {
-                inEmergencyMode = false;
-                System.out.println("[FLOWING FLUIDS RECOVERY] High throttling ended - MSPT: " + String.format("%.1f", msptMovingAverage) + " (Throttle: " + String.format("%.0f%%", currentThrottleLevel * 100) + ")");
-            }
-            
-            // Remove hard emergency mode thresholds - smooth throttling handles everything
-            // The mathematical system provides continuous adjustment without abrupt changes
-            
-            // Process pending fluid changes gradually
-            processPendingFluidChanges();
-            
-            // FLUID PAUSE CLEANUP - Remove expired paused fluids
-            if (currentTime - lastPauseCleanup > PAUSE_CLEANUP_INTERVAL) {
-                cleanupExpiredPausedFluids();
-                cleanupExpiredCooldowns(); // NEW: Clean up expired cooldowns
-                
-                // CIRCULAR BUFFER CLEANUP - Process queued fluids
-                processQueuedFluids();
-                
-                lastPauseCleanup = currentTime;
-            }
-            
-            // Initialize zones if not done yet
-            if (zoneThrottling.isEmpty()) {
-                initializeZones();
-            }
-            
-            // DEEP FLUID OPTIMIZATIONS - Efficient batch processing
-            tickCount = timingSystem.getTickCount(); // Use the field
-            
-            // MEDIUM PRIORITY: Batch Processing (every 5 ticks)
-            batchProcessDeepFluids();
-            
-            // MEDIUM PRIORITY: Player Proximity Scaling (every second)
-            if (currentServerLevel != null) {
-                updateLowestPlayerY(currentServerLevel);
-            }
-            
-            // LOW PRIORITY: Simple Statistics Tracking (every 30 seconds)
-            logDeepFluidStats();
-            
-            // LOW PRIORITY: Simple Surface Tracking (every 10 seconds)
-            updateOceanHoleSurfaces();
-            
-            // UNIFIED STATUS REPORTING - Prevent console spam
-            if (eventsThisTick.get() > 0 && timingSystem.shouldReport()) {
-                // Update active fluid counts if server level is available
-                if (currentServerLevel != null) {
-                    updateActiveFluidCounts(currentServerLevel);
-                }
-                
-                System.out.println(String.format("[FlowingFluidsFixes] REAL MSPT=%.2f, EntityDataOps=%d, NeighborOps=%d, EntitySectionOps=%d, TotalSkipped=%d", 
-                    cachedMSPT, entityDataOpsThisTick.get(), neighborUpdateOpsThisTick.get(), 
-                    entitySectionOpsThisTick.get(), skippedWorldwideOps.get()));
-                    
-                System.out.println(String.format("[FlowingFluidsFixes] SMOOTH+FORCEFUL: SmoothMSPT=%.2f, SmoothOps=%d, ForcefulOps=%d", 
-                    smoothMSPT, smoothOperations.get(), forcefulOperations.get()));
-                    
-                System.out.println(String.format("[FlowingFluidsFixes] ACTIVE FLUIDS: Total=%d, Flowing=%d, Stationary=%d", 
-                    activeFluidBlocks.get(), flowingFluidBlocks.get(), stationaryFluidBlocks.get()));
-                    
-                System.out.println(String.format("[FlowingFluidsFixes] RIVER FLOW: Operations=%d/%d, Skipped=%d", 
-                    riverFlowOperations.get(), getMaxRiverFlowOperations(), riverFlowSkipped.get()));
-                    
-                System.out.println(String.format("[FlowingFluidsFixes] CACHE PERFORMANCE: BlockCache=%d/%d (%.1f%%), FluidCache=%d/%d (%.1f%%)",
-                    blockCacheHits.get(), blockCacheHits.get() + blockCacheMisses.get(),
-                    getCacheHitRate(blockCacheHits.get(), blockCacheHits.get() + blockCacheMisses.get()),
-                    fluidCacheHits.get(), fluidCacheHits.get() + fluidCacheMisses.get(),
-                    getCacheHitRate(fluidCacheHits.get(), fluidCacheHits.get() + fluidCacheMisses.get())));
-                    
-                System.out.println(String.format("[FlowingFluidsFixes] VALUE CHANGE DETECTION: UnchangedSkips=%d, ChangeDetections=%d",
-                    unchangedFluidSkips.get(), fluidChangeDetections.get()));
-            }
         }
     }
     
@@ -1849,7 +1732,12 @@ public class FlowingFluidsFixesMinimal {
     }
     
     // OPTIMIZED: String key generation using StringBuilder
-    private static final ThreadLocal<StringBuilder> keyBuilder = ThreadLocal.withInitial(() -> new StringBuilder(32));
+    private static ThreadLocal<StringBuilder> keyBuilder = new ThreadLocal<StringBuilder>() {
+        @Override
+        protected StringBuilder initialValue() {
+            return new StringBuilder(32);
+        }
+    };
     
     private static String getFluidKeyOptimized(BlockPos pos) {
         StringBuilder sb = keyBuilder.get();
@@ -1868,14 +1756,8 @@ public class FlowingFluidsFixesMinimal {
     
     // OPTIMIZED: Batch distance calculations
     private static boolean isAnyPlayerWithinDistance(ServerLevel level, BlockPos pos, int maxDistance) {
-        int maxDistanceSq = maxDistance * maxDistance;
-        
-        for (ServerPlayer player : level.players()) {
-            if (getSquaredDistance(pos, player.blockPosition()) <= maxDistanceSq) {
-                return true;
-            }
-        }
-        return false;
+        // Use PlayerProximityCache for efficient player distance checking
+        return PlayerProximityCache.arePlayersWithinDistance(level, pos, maxDistance);
     }
     
     // OPTIMIZED: Replace chained if-statements with lookup tables
@@ -2401,15 +2283,9 @@ public class FlowingFluidsFixesMinimal {
                           cachedMSPT > 20.0 ? 5 : // 5 chunks (80 blocks) during moderate MSPT
                           6; // 6 chunks (96 blocks) during low MSPT
         
-        int blockRadius = spatialRadius * 16;
-        double radiusSq = blockRadius * blockRadius;
-        
         try {
-            // REAL PLAYER POSITION TRACKING - Check actual player positions
-            return serverLevel.players().stream().anyMatch(player -> {
-                double distanceSq = player.distanceToSqr(getBlockPosX(pos), getBlockPosY(pos), getBlockPosZ(pos));
-                return distanceSq <= radiusSq;
-            });
+            // Use PlayerProximityCache for efficient player proximity checking
+            return PlayerProximityCache.arePlayersWithinDistance(serverLevel, pos, spatialRadius);
         } catch (Exception e) {
             // Fallback to chunk-based check if player tracking fails
             return isWithinPlayerRadius(pos);
@@ -3367,12 +3243,334 @@ public class FlowingFluidsFixesMinimal {
         return false;
     }
     
+    // GLOBAL FLUID TICK THROTTLING - The single biggest missing piece
+    private static volatile boolean globalFluidTickThrottling = false;
+    private static volatile int fluidTickThrottleLevel = 0; // 0=none, 1=light, 2=heavy, 3=extreme
+    private static final AtomicLong totalFluidRandomTicks = new AtomicLong(0);
+    private static final AtomicLong throttledFluidRandomTicks = new AtomicLong(0);
+    private static long lastFluidTickSample = 0;
+    
+    // NEIGHBOR UPDATE THROTTLING - Block cascading neighbor updates during high MSPT
+    private static volatile boolean blockNeighborUpdates = false;
+    private static final AtomicLong totalNeighborUpdates = new AtomicLong(0);
+    private static final AtomicLong blockedNeighborUpdates = new AtomicLong(0);
+    private static long lastNeighborUpdateSample = 0;
+    
+    // Global fluid tick throttling check - call from fluid random tick hooks
+    public static boolean shouldThrottleFluidRandomTick(BlockPos pos) {
+        totalFluidRandomTicks.incrementAndGet();
+        
+        // Hard throttling during extreme MSPT
+        if (globalFluidTickThrottling) {
+            throttledFluidRandomTicks.incrementAndGet();
+            return true; // Skip this fluid random tick entirely
+        }
+        
+        // MSPT-based throttling levels
+        double mspt = cachedMSPT;
+        if (mspt > 45.0) {
+            // Extreme: Skip 95% of fluid random ticks
+            if ((System.currentTimeMillis() % 20) != 0) {
+                throttledFluidRandomTicks.incrementAndGet();
+                return true;
+            }
+        } else if (mspt > 35.0) {
+            // Heavy: Skip 80% of fluid random ticks  
+            if ((System.currentTimeMillis() % 5) != 0) {
+                throttledFluidRandomTicks.incrementAndGet();
+                return true;
+            }
+        } else if (mspt > 25.0) {
+            // Light: Skip 50% of fluid random ticks
+            if ((System.currentTimeMillis() % 2) != 0) {
+                throttledFluidRandomTicks.incrementAndGet();
+                return true;
+            }
+        }
+        
+        return false; // Allow this fluid random tick
+    }
+    
+    // Update global fluid tick throttling state
+    private static void updateGlobalFluidTickThrottling() {
+        long currentTime = System.currentTimeMillis();
+        
+        // Sample every 500ms (not every tick)
+        if (currentTime - lastFluidTickSample < 500) {
+            return;
+        }
+        lastFluidTickSample = currentTime;
+        
+        double mspt = cachedMSPT;
+        boolean oldThrottling = globalFluidTickThrottling;
+        int oldLevel = fluidTickThrottleLevel;
+        
+        if (mspt > 45.0) {
+            globalFluidTickThrottling = true;
+            fluidTickThrottleLevel = 3; // Extreme
+        } else if (mspt > 35.0) {
+            globalFluidTickThrottling = false; // Don't hard block, just throttle
+            fluidTickThrottleLevel = 2; // Heavy
+        } else if (mspt > 25.0) {
+            globalFluidTickThrottling = false;
+            fluidTickThrottleLevel = 1; // Light
+        } else {
+            globalFluidTickThrottling = false;
+            fluidTickThrottleLevel = 0; // None
+        }
+        
+        // Log state changes
+        if (oldThrottling != globalFluidTickThrottling || oldLevel != fluidTickThrottleLevel) {
+            String[] levelNames = {"None", "Light", "Heavy", "Extreme"};
+            System.out.println("[FLUID TICK THROTTLING] " + 
+                (globalFluidTickThrottling ? "HARD BLOCK" : "Throttling: " + levelNames[fluidTickThrottleLevel]) +
+                " (MSPT: " + String.format("%.1f", mspt) + "ms)");
+        }
+    }
+    
+    // Get fluid tick throttling statistics
+    public static String getFluidTickThrottlingStats() {
+        long total = totalFluidRandomTicks.get();
+        long throttled = throttledFluidRandomTicks.get();
+        double throttleRate = total > 0 ? (throttled * 100.0 / total) : 0.0;
+        
+        return String.format(
+            "Fluid Random Ticks: %d total, %d throttled (%.1f%%) | Level: %d | Hard Block: %s",
+            total, throttled, throttleRate, fluidTickThrottleLevel, globalFluidTickThrottling
+        );
+    }
+    
+    // Neighbor update blocking check - call from BlockState.updateNeighbourShapes hooks
+    public static boolean shouldBlockNeighborUpdates() {
+        totalNeighborUpdates.incrementAndGet();
+        
+        // Block neighbor updates during extreme MSPT to prevent cascading failures
+        if (blockNeighborUpdates) {
+            blockedNeighborUpdates.incrementAndGet();
+            return true; // Block this neighbor update entirely
+        }
+        
+        return false; // Allow this neighbor update
+    }
+    
+    // Update neighbor update blocking state
+    private static void updateNeighborUpdateBlocking() {
+        long currentTime = System.currentTimeMillis();
+        
+        // Sample every 500ms (not every tick)
+        if (currentTime - lastNeighborUpdateSample < 500) {
+            return;
+        }
+        lastNeighborUpdateSample = currentTime;
+        
+        double mspt = cachedMSPT;
+        boolean oldBlocking = blockNeighborUpdates;
+        
+        // Only block neighbor updates during extreme MSPT (higher threshold than fluid ticks)
+        if (mspt > 50.0) {
+            blockNeighborUpdates = true; // Block all neighbor updates
+        } else {
+            blockNeighborUpdates = false; // Allow normal neighbor updates
+        }
+        
+        // Log state changes
+        if (oldBlocking != blockNeighborUpdates) {
+            System.out.println("[NEIGHBOR UPDATE BLOCKING] " + 
+                (blockNeighborUpdates ? "BLOCKING" : "ALLOWED") +
+                " (MSPT: " + String.format("%.1f", mspt) + "ms)");
+        }
+    }
+    
+    // Get neighbor update blocking statistics
+    public static String getNeighborUpdateBlockingStats() {
+        long total = totalNeighborUpdates.get();
+        long blocked = blockedNeighborUpdates.get();
+        double blockRate = total > 0 ? (blocked * 100.0 / total) : 0.0;
+        
+        return String.format(
+            "Neighbor Updates: %d total, %d blocked (%.1f%%) | Blocking: %s",
+            total, blocked, blockRate, blockNeighborUpdates
+        );
+    }
+    
+    // Update spatial partitioning system
+    private static void updateSpatialPartitioning() {
+        long currentTime = System.currentTimeMillis();
+        
+        // Update spatial partitioning every 2 seconds (not every tick)
+        if (currentTime - lastSpatialUpdate < 2000) {
+            return;
+        }
+        lastSpatialUpdate = currentTime;
+        
+        // Clean up expired spatial data
+        SpatialPartitioningSystem.cleanupExpiredData();
+        
+        // Log spatial partitioning status
+        if (currentTime - lastSpatialReport > 10000) { // Every 10 seconds
+            lastSpatialReport = currentTime;
+            System.out.println("[SPATIAL PARTITIONING] " + SpatialPartitioningSystem.getSystemStatus());
+        }
+    }
+    
+    private static long lastSpatialUpdate = 0;
+    private static long lastSpatialReport = 0;
+    
+    // CACHE STATISTICS MONITORING - Track cache effectiveness
+    private static final AtomicLong cacheHits = new AtomicLong(0);
+    private static final AtomicLong cacheMisses = new AtomicLong(0);
+    private static final AtomicLong cooldownsApplied = new AtomicLong(0);
+    private static final AtomicLong eventsSkippedByRateLimit = new AtomicLong(0);
+    private static final AtomicLong eventsSkippedByMSPT = new AtomicLong(0);
+    
+    // Get comprehensive cache statistics
+    public static String getCacheStatistics() {
+        long hits = cacheHits.get();
+        long misses = cacheMisses.get();
+        long total = hits + misses;
+        double hitRate = total > 0 ? (hits * 100.0 / total) : 0.0;
+        
+        return String.format(
+            "Cache Stats: %d hits, %d misses, %.1f%% hit rate | " +
+            "Cooldowns: %d applied | Rate Limits: %d skipped | MSPT Limits: %d skipped | " +
+            "Cooldown Cache Size: %d entries | %s | %s | %s",
+            hits, misses, hitRate, cooldownsApplied.get(), 
+            eventsSkippedByRateLimit.get(), eventsSkippedByMSPT.get(),
+            fluidCooldowns.size(),
+            PlayerProximityCache.getCacheStatistics(),
+            EntityProcessingOptimizer.getEntityProcessingStatistics(),
+            SpatialPartitioningSystem.getSpatialStatistics()
+        );
+    }
+    
+    // Test cache effectiveness
+    public static void runCacheEffectivenessTest() {
+        System.out.println("[CACHE TEST] Starting cache effectiveness test...");
+        
+        // Clear statistics for clean test
+        cacheHits.set(0);
+        cacheMisses.set(0);
+        
+        // Simulate cache operations
+        BlockPos testPos = new BlockPos(100, 64, 100);
+        long startTime = System.currentTimeMillis();
+        
+        // Test 1000 cache lookups
+        for (int i = 0; i < 1000; i++) {
+            Long cooldownTime = fluidCooldowns.get(testPos);
+            if (cooldownTime != null) {
+                cacheHits.incrementAndGet();
+            } else {
+                cacheMisses.incrementAndGet();
+                // Add to cache
+                fluidCooldowns.put(testPos, System.currentTimeMillis());
+            }
+        }
+        
+        long endTime = System.currentTimeMillis();
+        long duration = endTime - startTime;
+        
+        System.out.println("[CACHE TEST] Results:");
+        System.out.println("  Duration: " + duration + "ms for 1000 operations");
+        System.out.println("  " + getCacheStatistics());
+        System.out.println("  Average per operation: " + (duration / 1000.0) + "ms");
+        
+        // Cleanup test data
+        fluidCooldowns.remove(testPos);
+    }
+    
+    // Test rate limiting effectiveness
+    public static void runRateLimitTest() {
+        System.out.println("[RATE LIMIT TEST] Starting rate limit effectiveness test...");
+        
+        eventsSkippedByRateLimit.set(0);
+        eventsThisSecond = 0;
+        MAX_EVENTS_PER_SECOND = 100; // Set low for testing
+        
+        // Simulate high event rate
+        int testEvents = 500;
+        int allowedEvents = 0;
+        
+        for (int i = 0; i < testEvents; i++) {
+            if (eventsThisSecond < MAX_EVENTS_PER_SECOND) {
+                eventsThisSecond++;
+                allowedEvents++;
+            } else {
+                eventsSkippedByRateLimit.incrementAndGet();
+            }
+        }
+        
+        System.out.println("[RATE LIMIT TEST] Results:");
+        System.out.println("  Test Events: " + testEvents);
+        System.out.println("  Allowed Events: " + allowedEvents);
+        System.out.println("  Skipped Events: " + eventsSkippedByRateLimit.get());
+        System.out.println("  Rate Limit Effectiveness: " + 
+            ((eventsSkippedByRateLimit.get() * 100.0) / testEvents) + "%");
+        
+        // Reset to normal value
+        MAX_EVENTS_PER_SECOND = 1000;
+    }
+    
+    // Test dynamic cooldown system
+    public static void runDynamicCooldownTest() {
+        System.out.println("[DYNAMIC COOLDOWN TEST] Starting dynamic cooldown test...");
+        
+        cooldownsApplied.set(0);
+        
+        // Test different MSPT scenarios
+        double[] testMSPTs = {5.0, 15.0, 25.0, 35.0, 55.0};
+        String[] scenarios = {"Normal", "Light", "Moderate", "High", "Extreme"};
+        
+        for (int i = 0; i < testMSPTs.length; i++) {
+            cachedMSPT = testMSPTs[i];
+            long cooldownDuration = getDynamicCooldownDuration();
+            
+            System.out.println("  " + scenarios[i] + " (MSPT: " + testMSPTs[i] + "): " + 
+                cooldownDuration + "ms cooldown");
+            
+            // Simulate applying cooldown
+            BlockPos testPos = new BlockPos(i, 64, i);
+            fluidCooldowns.put(testPos, System.currentTimeMillis());
+            cooldownsApplied.incrementAndGet();
+        }
+        
+        System.out.println("  Total cooldowns applied: " + cooldownsApplied.get());
+        
+        // Cleanup test data
+        for (int i = 0; i < testMSPTs.length; i++) {
+            fluidCooldowns.remove(new BlockPos(i, 64, i));
+        }
+    }
+    
     // CACHE INVALIDATION SYSTEM - Get world change statistics
     public static String getWorldChangeStatistics() {
         return String.format("World Changes: %d, Cache Invalidations: %d, Recent Explosions: %d, Recent Block Updates: %d",
             worldChangeEvents.get(), cacheInvalidations.get(), 
             recentExplosions.size(), recentBlockUpdates.size());
     }
+    
+    // Dynamic cooldown duration based on server load
+    private static long getDynamicCooldownDuration() {
+        double mspt = cachedMSPT;
+        
+        if (mspt > 50.0) {
+            // CRITICAL: 15 second cooldown during extreme lag
+            return 15000L;
+        } else if (mspt > 30.0) {
+            // HIGH: 10 second cooldown during severe lag
+            return 10000L;
+        } else if (mspt > 20.0) {
+            // MODERATE: 7 second cooldown during moderate lag
+            return 7000L;
+        } else if (mspt > 10.0) {
+            // LIGHT: 3 second cooldown during light lag
+            return 3000L;
+        } else {
+            // NORMAL: 1 second cooldown during normal operation
+            return 1000L;
+        }
+    }
+    
     @SubscribeEvent
     public void onNeighborNotify(BlockEvent.NeighborNotifyEvent event) {
         // EVENT RATE LIMITING - Prevent system overload
@@ -3408,166 +3606,46 @@ public class FlowingFluidsFixesMinimal {
         eventsThisTick.incrementAndGet();
         
         // LAZY EVALUATION - Only evaluate expensive processing when needed
-        Supplier<Boolean> shouldProcess = () -> {
-            // HIGH MSPT FAST EXIT - Prevent optimization system from making lag worse
-            // SMOOTH MATHEMATICAL THROTTLING - Apply continuous scaling instead of hard thresholds
-            double throttleFactor = getSmoothThrottleFactor(); // 0.0 = no processing, 1.0 = full processing
-            
-            // Apply smooth throttling using mathematical scaling
-            if (Math.random() > throttleFactor) {
+        // Note: Fluids should never be stopped from flowing, only collection throttled
+        // This check only limits collecting MORE events when overloaded
+        
+        // OCEAN LEVEL DETECTION - Apply additional throttling for ocean processing
+        int posY = getBlockPosY(pos);
+        if (posY < 63) { // Ocean level detection
+            // Apply additional throttling for ocean processing during high load
+            double throttleFactor = cachedMSPT > 25.0 ? 0.25 : 1.0; // Define throttleFactor
+            if (throttleFactor < 0.3) { // Only skip ocean processing during high throttling
                 skippedFluidEvents.incrementAndGet();
-                return false; // Skip this fluid event due to smooth mathematical throttling
+                return; // Skip ocean processing during high throttling
             }
-            
-            // CRITICAL MSPT EMERGENCY - Complete shutdown only for extreme cases
-            if (cachedMSPT > 100.0) { // Critical MSPT threshold
-                return false; // Fast exit to prevent making lag worse
+        }
+        
+        // FLUID COOLDOWN SYSTEM - Check if this fluid is on cooldown
+        Long cooldownTime = fluidCooldowns.get(pos);
+        if (cooldownTime != null) {
+            // Fluid is on cooldown - check if cooldown has expired
+            long timeSinceCooldown = System.currentTimeMillis() - cooldownTime;
+            long dynamicCooldownDuration = getDynamicCooldownDuration();
+            if (timeSinceCooldown < dynamicCooldownDuration) {
+                return; // Fluid still on cooldown
             }
-            
-            // EMERGENCY MODE FOR MASSIVE FLUID CHANGES - Detect large operations
-            if (fluidCooldowns.size() > 5000) { // Too many fluids on cooldown
-                // Emergency mode - much stricter processing
-                if (cooldownExpirationsThisTick.get() >= 5) { // Only 5 expirations per tick in emergency
-                    return false;
-                }
-                // Put new fluids directly on cooldown without processing
-                if (!fluidCooldowns.containsKey(pos)) {
-                    if (fluidCooldowns.size() < MAX_COOLDOWN_FLUIDS) {
-                        fluidCooldowns.put(pos, System.currentTimeMillis());
-                    }
-                    return false;
-                }
-            }
-            
-            // OCEAN DETECTION - Apply smooth mathematical throttling to prevent lag
-            // Use reflection-based coordinate access to avoid obfuscation issues
-            int posY = getBlockPosY(pos);
-            if (posY < 63) { // Ocean level detection
-                // Apply additional throttling for ocean processing during high load
-                if (throttleFactor < 0.3) { // Only skip ocean processing during high throttling
-                    skippedFluidEvents.incrementAndGet();
-                    return false; // Skip ocean processing during high throttling
-                }
-                
-                // Count nearby water blocks to detect ocean operations
-                int nearbyWaterBlocks = 0;
-                for (int dx = -2; dx <= 2; dx++) {
-                    for (int dz = -2; dz <= 2; dz++) {
-                        if (dx == 0 && dz == 0) continue;
-                        BlockPos checkPos = safeOffset(pos, dx, 0, dz);
-                        if (safeIsLoaded(level, checkPos)) {
-                            BlockState checkState;
-                            try {
-                                // Use reflection to avoid method signature issues
-                                checkState = (BlockState) Level.class.getMethod("getBlockState", BlockPos.class).invoke(level, checkPos);
-                            } catch (Exception e) {
-                                // If reflection fails, skip this check
-                                continue;
-                            }
-                            if (checkState.is(Blocks.WATER)) {
-                                nearbyWaterBlocks++;
-                                if (nearbyWaterBlocks > 15) { // Likely ocean operation
-                                    // Put on extended cooldown for ocean operations
-                                    if (!fluidCooldowns.containsKey(pos) && fluidCooldowns.size() < MAX_COOLDOWN_FLUIDS) {
-                                        fluidCooldowns.put(pos, System.currentTimeMillis());
-                                    }
-                                    return false;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // FLUID COOLDOWN SYSTEM - Check if this fluid is on cooldown
-            Long cooldownTime = fluidCooldowns.get(pos);
-            if (cooldownTime != null) {
-                // Fluid is on cooldown - check if cooldown has expired
-                long timeSinceCooldown = System.currentTimeMillis() - cooldownTime;
-                if (timeSinceCooldown < FLUID_COOLDOWN_DURATION) {
-                    return false; // Fluid still on cooldown
+        }
+        
+        // SIMPLIFIED FAST PATH - Bypass complex optimizations during high load
+        if (cachedMSPT > 50.0 || optimizationsDisabled) { // High MSPT threshold OR disabled flag
+            // Simple distance check only - skip complex unified optimization
+            if (!isWithinPlayerRadius(pos)) {
+                // PUT ON COOLDOWN even during fast path
+                if (fluidCooldowns.size() < MAX_COOLDOWN_FLUIDS) {
+                    fluidCooldowns.put(pos, System.currentTimeMillis());
+                    return; // Fluid on cooldown
                 } else {
-                    // RATE LIMITING - Check if we've exceeded expirations this tick
-                    long currentTickTime = System.currentTimeMillis();
-                    if (currentTickTime - lastTickReset > 50) { // Reset every 50ms (1 tick)
-                        cooldownExpirationsThisTick.set(0);
-                        lastTickReset = currentTickTime;
-                    }
-                    
-                    if (cooldownExpirationsThisTick.get() >= MAX_COOLDOWN_EXPIRATIONS_PER_TICK) {
-                        // Too many expirations this tick - keep this fluid on cooldown
-                        return false; 
-                    }
-                    
-                    // STAGGERED COOLDOWN EXPIRATION - Prevent processing storms
-                    // Use position-based stagger to spread out expirations
-                    long staggerDelay = (getBlockPosX(pos) + getBlockPosY(pos) + getBlockPosZ(pos)) % 1000; // 0-999ms stagger
-                    if (timeSinceCooldown < FLUID_COOLDOWN_DURATION + staggerDelay) {
-                        return false; // Fluid still in staggered cooldown
-                    }
-                    
-                    // Cooldown expired - remove from cooldown list and count expiration
-                    fluidCooldowns.remove(pos);
-                    cooldownExpirationsThisTick.incrementAndGet();
-                    
-                    // Only log occasionally to reduce spam
-                    if (cooldownExpirationsThisTick.get() % 25 == 0) {
-                        System.out.println("[FLUID COOLDOWN] Processed " + cooldownExpirationsThisTick.get() + "/" + MAX_COOLDOWN_EXPIRATIONS_PER_TICK + " expirations this tick - remaining: " + fluidCooldowns.size());
-                    }
+                    return; // Skip if too many cooldowns
                 }
             }
             
-            // FLUID PAUSE SYSTEM - Check for paused fluids during high load
-            if (cachedMSPT > 30.0) { // Lower threshold for pause system activation
-                // Check if this fluid is paused
-                Long pauseTime = pausedFluids.get(pos);
-                if (pauseTime != null) {
-                    // Fluid is paused - check if timeout has expired
-                    if (System.currentTimeMillis() - pauseTime < FLUID_PAUSE_DURATION) {
-                        return false; // Fluid waiting for timeout
-                    } else {
-                        // Timeout expired - remove from paused list and put on cooldown
-                        pausedFluids.remove(pos);
-                        if (fluidCooldowns.size() < MAX_COOLDOWN_FLUIDS) {
-                            fluidCooldowns.put(pos, System.currentTimeMillis());
-                            System.out.println("[FLUID PAUSE] Fluid timeout expired - placed on cooldown at " + pos);
-                        }
-                        return false; // Fluid now on cooldown
-                    }
-                }
-                
-                // If we're in high load, put new fluids that are far from players on cooldown
-                if (!isWithinPlayerRadius(pos)) {
-                    // PUT THE FLUID ON COOLDOWN instead of just skipping it
-                    if (fluidCooldowns.size() < MAX_COOLDOWN_FLUIDS) {
-                        fluidCooldowns.put(pos, System.currentTimeMillis());
-                        System.out.println("[FLUID COOLDOWN] New fluid placed on cooldown during high load at " + pos);
-                        return false; // Fluid on cooldown - will retry after cooldown period
-                    } else {
-                        // Too many cooldowns - just skip this one
-                        return false;
-                    }
-                }
-            }
-            
-            // SIMPLIFIED FAST PATH - Bypass complex optimizations during high load
-            if (cachedMSPT > 50.0 || optimizationsDisabled) { // High MSPT threshold OR disabled flag
-                // Simple distance check only - skip complex unified optimization
-                if (!isWithinPlayerRadius(pos)) {
-                    // PUT ON COOLDOWN even during fast path
-                    if (fluidCooldowns.size() < MAX_COOLDOWN_FLUIDS) {
-                        fluidCooldowns.put(pos, System.currentTimeMillis());
-                        return false; // Fluid on cooldown
-                    } else {
-                        return false; // Skip if too many cooldowns
-                    }
-                }
-                
-                return false; // Fast path - no complex optimizations
-            }
-            
-            return true; // Allow processing
-        };
+            return; // Fast path - no complex optimizations
+        }
         
         // BITSET OPTIMIZATION - Track processing state efficiently
         int posKey = Math.abs(pos.hashCode()) % 1000;
@@ -3575,13 +3653,6 @@ public class FlowingFluidsFixesMinimal {
             skippedFluidEvents.incrementAndGet();
             fluidProcessingFlags.clear(posKey); // Clear flag when skipped
             return; // Already processing this position
-        }
-        
-        // Only evaluate expensive processing if needed
-        if (!shouldProcess.get()) {
-            skippedFluidEvents.incrementAndGet();
-            fluidProcessingFlags.clear(posKey); // Clear flag when skipped
-            return;
         }
         
         // Set processing flag
@@ -3611,25 +3682,6 @@ public class FlowingFluidsFixesMinimal {
         // LOD SYSTEM - Only apply if spatial optimization is active
         if (spatialOptimizationActive && !shouldProcessFluidAtLOD(level, pos)) {
             skippedFluidEvents.incrementAndGet();
-            return; // Skip fluid events too far from players
-        }
-        
-        // Apply global spatial optimization - Only apply if active
-        if (spatialOptimizationActive && !isWithinPlayerRadius(pos)) {
-            skippedFluidEvents.incrementAndGet();
-            return; // Skip fluid events far from players
-        }
-        
-        // OPERATION THROTTLING - Check per-tick operation limits
-        if (!shouldAllowOperation()) {
-            skippedFluidEvents.incrementAndGet();
-            return; // Skip due to operation throttling
-        }
-        
-        // SPATIAL PARTITIONING - Add fluid to chunk group for batch processing
-        addFluidToChunkGroup(pos);
-        
-        // Apply global operation tracking
         totalWorldwideOps.incrementAndGet();
         
         // Simulate the bottlenecks that would be triggered by this fluid event
@@ -3669,6 +3721,7 @@ public class FlowingFluidsFixesMinimal {
         // Increment optimization counter
         totalOptimizationsApplied.incrementAndGet();
     }
+    }
     
     // Public API for external systems
     public static boolean isSpatialOptimizationActive() {
@@ -3697,13 +3750,7 @@ public class FlowingFluidsFixesMinimal {
         return skippedFluidEvents.get() + skippedWorldwideOps.get();
     }
     
-    // SMOOTH MATHEMATICAL THROTTLING - Emergency methods replaced with continuous scaling
-    // No hard thresholds needed - mathematical functions handle all transitions
-    
-    /**
-     * FLUID PAUSE CLEANUP - Remove expired paused fluids to prevent memory leaks
-     * Called every server tick to clean up paused fluids that have timed out
-     */
+    // CLEANUP METHODS - Properly structured inside class
     private static void cleanupExpiredPausedFluids() {
         if (pausedFluids.isEmpty()) return; // No paused fluids to cleanup
         
@@ -3739,6 +3786,47 @@ public class FlowingFluidsFixesMinimal {
         }
     }
     
+    private static void cleanupExpiredCooldowns() {
+        if (fluidCooldowns.isEmpty()) return; // No cooldowns to cleanup
+        
+        long currentTime = System.currentTimeMillis();
+        List<BlockPos> expiredCooldowns = new ArrayList<>();
+        long dynamicCooldownDuration = getDynamicCooldownDuration();
+        
+        // Find expired cooldowns using dynamic duration
+        for (Map.Entry<BlockPos, Long> entry : fluidCooldowns.entrySet()) {
+            if (currentTime - entry.getValue() >= dynamicCooldownDuration) {
+                expiredCooldowns.add(entry.getKey());
+            }
+        }
+        
+        // Remove expired cooldowns
+        for (BlockPos pos : expiredCooldowns) {
+            fluidCooldowns.remove(pos);
+        }
+        
+        // Log dynamic cooldown usage
+        if (!expiredCooldowns.isEmpty()) {
+            System.out.println("[FLUID COOLDOWN] Cleaned up " + expiredCooldowns.size() + " expired cooldowns (dynamic duration: " + dynamicCooldownDuration + "ms based on " + String.format("%.1f", cachedMSPT) + "ms MSPT)");
+        }
+        
+        // Prevent memory leak - limit cooldowns
+        if (fluidCooldowns.size() > MAX_COOLDOWN_FLUIDS) {
+            // Remove oldest cooldowns if we exceed the limit
+            List<Map.Entry<BlockPos, Long>> entries = new ArrayList<>(fluidCooldowns.entrySet());
+            entries.sort(Map.Entry.comparingByValue()); // Sort by timestamp (oldest first)
+            
+            int toRemove = fluidCooldowns.size() - MAX_COOLDOWN_FLUIDS;
+            for (int i = 0; i < toRemove; i++) {
+                fluidCooldowns.remove(entries.get(i).getKey());
+            }
+        }
+        
+        if (!expiredCooldowns.isEmpty()) {
+            System.out.println("[FLUID COOLDOWN] Cleaned up " + expiredCooldowns.size() + " expired cooldowns");
+        }
+    }
+    
     // CIRCULAR BUFFER PROCESSING - Process queued fluids efficiently
     private static void processQueuedFluids() {
         if (fluidQueue.isEmpty()) return;
@@ -3757,40 +3845,6 @@ public class FlowingFluidsFixesMinimal {
         
         if (processed > 0) {
             System.out.println("[CIRCULAR BUFFER] Processed " + processed + " queued fluids");
-        }
-    }
-    
-    // FLUID COOLDOWN CLEANUP - Remove expired cooldowns
-    private static void cleanupExpiredCooldowns() {
-        long currentTime = System.currentTimeMillis();
-        List<BlockPos> expiredCooldowns = new ArrayList<>();
-        
-        // Find expired cooldowns
-        for (Map.Entry<BlockPos, Long> entry : fluidCooldowns.entrySet()) {
-            if (currentTime - entry.getValue() > FLUID_COOLDOWN_DURATION) {
-                expiredCooldowns.add(entry.getKey());
-            }
-        }
-        
-        // Remove expired cooldowns
-        for (BlockPos pos : expiredCooldowns) {
-            fluidCooldowns.remove(pos);
-        }
-        
-        // Prevent memory leak - limit cooldowns
-        if (fluidCooldowns.size() > MAX_COOLDOWN_FLUIDS) {
-            // Remove oldest cooldowns if we exceed the limit
-            List<Map.Entry<BlockPos, Long>> entries = new ArrayList<>(fluidCooldowns.entrySet());
-            entries.sort(Map.Entry.comparingByValue()); // Sort by timestamp (oldest first)
-            
-            int toRemove = fluidCooldowns.size() - MAX_COOLDOWN_FLUIDS;
-            for (int i = 0; i < toRemove; i++) {
-                fluidCooldowns.remove(entries.get(i).getKey());
-            }
-        }
-        
-        if (!expiredCooldowns.isEmpty()) {
-            System.out.println("[FLUID COOLDOWN] Cleaned up " + expiredCooldowns.size() + " expired cooldowns");
         }
     }
 }
