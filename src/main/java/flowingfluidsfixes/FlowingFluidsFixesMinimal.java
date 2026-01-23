@@ -123,6 +123,22 @@ public class FlowingFluidsFixesMinimal {
     private static final AtomicInteger throttledOperations = new AtomicInteger(0);
     private static final AtomicInteger allowedOperations = new AtomicInteger(0);
     
+    // SMOOTH MATHEMATICAL THROTTLING - Continuous scaling functions
+    private static double currentThrottleLevel = 1.0; // 1.0 = full throttling, 0.0 = no throttling
+    private static long lastThrottleAdjustment = 0;
+    private static final long THROTTLE_ADJUSTMENT_INTERVAL = 200; // Adjust every 200ms for ultra-smooth transitions
+    private static double msptMovingAverage = 15.0; // Moving average for smooth MSPT tracking
+    private static final double MSPT_ALPHA = 0.05; // Smoothing factor for MSPT average (5% new, 95% old)
+    private static final double TARGET_MSPT = 12.0; // Target MSPT for optimal performance
+    private static final double SMOOTHING_FACTOR = 0.8; // How smoothly to adjust (0.8 = very smooth)
+    private static final double RESPONSE_SENSITIVITY = 0.15; // How responsive to MSPT changes (0.15 = moderate)
+    
+    // Mathematical function parameters
+    private static final double THROTTLE_CURVE_STEEPNESS = 2.5; // Steepness of S-curve (higher = steeper)
+    private static final double THROTTLE_CURVE_MIDPOINT = 20.0; // MSPT where throttling is 50%
+    private static final double MIN_THROTTLE = 0.0; // Minimum throttling (0% = no throttling)
+    private static final double MAX_THROTTLE = 0.95; // Maximum throttling (95% = almost complete)
+    
     // PREVENTIVE FLUID MANAGEMENT - Stop issues before they start
     private static final ConcurrentHashMap<Long, Integer> fluidPressureMap = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, Integer> chunkFlowRate = new ConcurrentHashMap<>();
@@ -672,6 +688,56 @@ public class FlowingFluidsFixesMinimal {
         System.out.println("[FlowingFluidsFixes] Memory leak prevention: All caches initialized and cleared");
     }
 
+    // SMOOTH MATHEMATICAL THROTTLING - Continuous scaling functions
+    private static void updateGradualThrottling() {
+        long currentTime = System.currentTimeMillis();
+        
+        // Only adjust throttling at intervals
+        if (currentTime - lastThrottleAdjustment < THROTTLE_ADJUSTMENT_INTERVAL) {
+            return;
+        }
+        
+        lastThrottleAdjustment = currentTime;
+        
+        // Update moving average for smooth MSPT tracking
+        msptMovingAverage = (MSPT_ALPHA * cachedMSPT) + ((1.0 - MSPT_ALPHA) * msptMovingAverage);
+        
+        // Calculate target throttling using sigmoid S-curve function
+        double targetThrottle = calculateTargetThrottle(msptMovingAverage);
+        
+        // Smooth transition using exponential moving average
+        currentThrottleLevel = (SMOOTHING_FACTOR * targetThrottle) + ((1.0 - SMOOTHING_FACTOR) * currentThrottleLevel);
+        
+        // Apply bounds
+        currentThrottleLevel = Math.max(MIN_THROTTLE, Math.min(MAX_THROTTLE, currentThrottleLevel));
+        
+        // Log significant changes only
+        if (Math.abs(targetThrottle - currentThrottleLevel) > 0.05) {
+            System.out.println(String.format("[FlowingFluidsFixes] Mathematical throttling: %.1f%% (MSPT: %.1f, Target: %.1f%%)", 
+                currentThrottleLevel * 100, msptMovingAverage, targetThrottle * 100));
+        }
+    }
+    
+    // Mathematical S-curve function for smooth throttling
+    private static double calculateTargetThrottle(double mspt) {
+        // Sigmoid function: f(x) = L / (1 + e^(-k(x - x0)))
+        // Where L = max value, k = steepness, x0 = midpoint
+        
+        // Normalize MSPT to 0-1 range around target
+        double normalizedMSPT = (mspt - TARGET_MSPT) / THROTTLE_CURVE_MIDPOINT;
+        
+        // Apply sigmoid function
+        double sigmoid = 1.0 / (1.0 + Math.exp(-THROTTLE_CURVE_STEEPNESS * normalizedMSPT));
+        
+        // Scale to throttle range
+        return MIN_THROTTLE + (MAX_THROTTLE - MIN_THROTTLE) * sigmoid;
+    }
+    
+    // Get smooth throttling factor for fluid processing
+    private static double getSmoothThrottleFactor() {
+        return 1.0 - currentThrottleLevel; // Convert to processing factor (0 = no processing, 1 = full processing)
+    }
+
     @SubscribeEvent
     public void onServerTick(TickEvent.ServerTickEvent event) {
         if (event.phase == TickEvent.Phase.END) {
@@ -683,6 +749,9 @@ public class FlowingFluidsFixesMinimal {
             if (System.currentTimeMillis() - lastTickTime > 1000) {
                 updateAdaptiveManagement();
             }
+            
+            // Update gradual throttling release system
+            updateGradualThrottling();
             
             // Store server level reference for fluid counting
             currentServerLevel = null; // Will be updated below
@@ -3257,6 +3326,16 @@ public class FlowingFluidsFixesMinimal {
         // LAZY EVALUATION - Only evaluate expensive processing when needed
         Supplier<Boolean> shouldProcess = () -> {
             // HIGH MSPT FAST EXIT - Prevent optimization system from making lag worse
+            // SMOOTH MATHEMATICAL THROTTLING - Apply continuous scaling instead of hard thresholds
+            double throttleFactor = getSmoothThrottleFactor(); // 0.0 = no processing, 1.0 = full processing
+            
+            // Apply smooth throttling using mathematical scaling
+            if (Math.random() > throttleFactor) {
+                skippedFluidEvents.incrementAndGet();
+                return false; // Skip this fluid event due to smooth mathematical throttling
+            }
+            
+            // CRITICAL MSPT EMERGENCY - Complete shutdown only for extreme cases
             if (cachedMSPT > 100.0) { // Critical MSPT threshold
                 return false; // Fast exit to prevent making lag worse
             }
@@ -3276,10 +3355,16 @@ public class FlowingFluidsFixesMinimal {
                 }
             }
             
-            // OCEAN DETECTION - Special handling for large water bodies
+            // OCEAN DETECTION - Apply smooth mathematical throttling to prevent lag
             // Use reflection-based coordinate access to avoid obfuscation issues
             int posY = getBlockPosY(pos);
             if (posY < 63) { // Ocean level detection
+                // Apply additional throttling for ocean processing during high load
+                if (throttleFactor < 0.3) { // Only skip ocean processing during high throttling
+                    skippedFluidEvents.incrementAndGet();
+                    return false; // Skip ocean processing during high throttling
+                }
+                
                 // Count nearby water blocks to detect ocean operations
                 int nearbyWaterBlocks = 0;
                 for (int dx = -2; dx <= 2; dx++) {
