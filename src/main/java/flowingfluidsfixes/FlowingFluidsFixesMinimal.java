@@ -332,118 +332,8 @@ public class FlowingFluidsFixesMinimal {
     private static final int MAX_COOLDOWN_EXPIRATIONS_PER_TICK = 25; // REDUCED: Stricter limit for large operations
     private static long lastTickReset = System.currentTimeMillis();
     
-    // REFLECTION HELPER - Handle obfuscated BlockPos methods
-    private static int getBlockPosX(BlockPos pos) {
-        try {
-            return pos.getX(); // Try direct method first
-        } catch (NoSuchMethodError e) {
-            // Fallback: Use reflection to access the field
-            try {
-                java.lang.reflect.Field field = BlockPos.class.getDeclaredField("f");
-                field.setAccessible(true);
-                return field.getInt(pos);
-            } catch (Exception ex) {
-                // Ultimate fallback: use toString parsing with correct pattern
-                String posStr = pos.toString();
-                // BlockPos.toString() format: "BlockPos{x=X, y=Y, z=Z}"
-                // Extract X coordinate using regex
-                try {
-                    java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("x=(-?\\d+)");
-                    java.util.regex.Matcher matcher = pattern.matcher(posStr);
-                    if (matcher.find()) {
-                        return Integer.parseInt(matcher.group(1));
-                    }
-                } catch (Exception regexEx) {
-                    // If regex fails, try simple string manipulation
-                    int xIndex = posStr.indexOf("x=");
-                    if (xIndex != -1) {
-                        int commaIndex = posStr.indexOf(',', xIndex + 2);
-                        if (commaIndex != -1) {
-                            String xStr = posStr.substring(xIndex + 2, commaIndex);
-                            return Integer.parseInt(xStr.trim());
-                        }
-                    }
-                }
-                // Last resort - return 0 to prevent crash
-                return 0;
-            }
-        }
-    }
-    
-    private static int getBlockPosY(BlockPos pos) {
-        try {
-            return pos.getY(); // Try direct method first
-        } catch (NoSuchMethodError e) {
-            // Fallback: Use reflection to access the field
-            try {
-                java.lang.reflect.Field field = BlockPos.class.getDeclaredField("g");
-                field.setAccessible(true);
-                return field.getInt(pos);
-            } catch (Exception ex) {
-                // Ultimate fallback: use toString parsing with correct pattern
-                String posStr = pos.toString();
-                // BlockPos.toString() format: "BlockPos{x=X, y=Y, z=Z}"
-                // Extract Y coordinate using regex or manual parsing
-                try {
-                    // Use regex to find y=Y pattern
-                    java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("y=(-?\\d+)");
-                    java.util.regex.Matcher matcher = pattern.matcher(posStr);
-                    if (matcher.find()) {
-                        return Integer.parseInt(matcher.group(1));
-                    }
-                } catch (Exception regexEx) {
-                    // If regex fails, try simple string manipulation
-                    int yIndex = posStr.indexOf("y=");
-                    if (yIndex != -1) {
-                        int commaIndex = posStr.indexOf(',', yIndex + 2);
-                        if (commaIndex != -1) {
-                            String yStr = posStr.substring(yIndex + 2, commaIndex);
-                            return Integer.parseInt(yStr.trim());
-                        }
-                    }
-                }
-                // Last resort - return 0 to prevent crash
-                return 0;
-            }
-        }
-    }
-    
-    private static int getBlockPosZ(BlockPos pos) {
-        try {
-            return pos.getZ(); // Try direct method first
-        } catch (NoSuchMethodError e) {
-            // Fallback: Use reflection to access the field
-            try {
-                java.lang.reflect.Field field = BlockPos.class.getDeclaredField("h");
-                field.setAccessible(true);
-                return field.getInt(pos);
-            } catch (Exception ex) {
-                // Ultimate fallback: use toString parsing with correct pattern
-                String posStr = pos.toString();
-                // BlockPos.toString() format: "BlockPos{x=X, y=Y, z=Z}"
-                // Extract Z coordinate using regex
-                try {
-                    java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("z=(-?\\d+)");
-                    java.util.regex.Matcher matcher = pattern.matcher(posStr);
-                    if (matcher.find()) {
-                        return Integer.parseInt(matcher.group(1));
-                    }
-                } catch (Exception regexEx) {
-                    // If regex fails, try simple string manipulation
-                    int zIndex = posStr.indexOf("z=");
-                    if (zIndex != -1) {
-                        int braceIndex = posStr.indexOf('}', zIndex + 2);
-                        if (braceIndex != -1) {
-                            String zStr = posStr.substring(zIndex + 2, braceIndex);
-                            return Integer.parseInt(zStr.trim());
-                        }
-                    }
-                }
-                // Last resort - return 0 to prevent crash
-                return 0;
-            }
-        }
-    }
+    // REMOVED: BlockPos helper methods - use direct calls for zero latency
+    // pos.getX(), pos.getY(), pos.getZ() are the correct methods for Minecraft 1.20.1
     
     // SAFE BLOCKPOS OFFSET - Handle obfuscated offset method
     private static BlockPos safeOffset(BlockPos pos, int dx, int dy, int dz) {
@@ -457,9 +347,9 @@ public class FlowingFluidsFixesMinimal {
                 return (BlockPos) offsetMethod.invoke(pos, dx, dy, dz);
             } catch (Exception ex) {
                 // Ultimate fallback: Create new BlockPos manually
-                int newX = getBlockPosX(pos) + dx;
-                int newY = getBlockPosY(pos) + dy;
-                int newZ = getBlockPosZ(pos) + dz;
+                int newX = pos.getX() + dx;
+                int newY = pos.getY() + dy;
+                int newZ = pos.getZ() + dz;
                 try {
                     // Try BlockPos constructor
                     java.lang.reflect.Constructor<BlockPos> constructor = BlockPos.class.getConstructor(int.class, int.class, int.class);
@@ -485,8 +375,8 @@ public class FlowingFluidsFixesMinimal {
                 // Ultimate fallback: Check if chunk exists (less safe but prevents crash)
                 try {
                     // Try to get chunk at position
-                    int chunkX = getBlockPosX(pos) >> 4;
-                    int chunkZ = getBlockPosZ(pos) >> 4;
+                    int chunkX = pos.getX() >> 4;
+                    int chunkZ = pos.getZ() >> 4;
                     java.lang.reflect.Method getChunkMethod = Level.class.getMethod("getChunk", int.class, int.class);
                     Object chunk = getChunkMethod.invoke(level, chunkX, chunkZ);
                     return chunk != null;
@@ -2059,7 +1949,15 @@ public class FlowingFluidsFixesMinimal {
             // OPTIMIZED: Use squared distance to avoid expensive Math.sqrt
             double minDistanceSq = Double.MAX_VALUE;
             
-            for (net.minecraft.server.level.ServerPlayer player : serverLevel.players()) {
+            // Use reflection to get players list
+            java.util.List<net.minecraft.server.level.ServerPlayer> players;
+            try {
+                players = (java.util.List<net.minecraft.server.level.ServerPlayer>) ServerLevel.class.getMethod("m_6907_").invoke(serverLevel);
+            } catch (Exception e) {
+                players = java.util.Collections.emptyList(); // Fallback to empty list
+            }
+            
+            for (net.minecraft.server.level.ServerPlayer player : players) {
                 double distanceSq = player.distanceToSqr(pos.getX(), pos.getY(), pos.getZ());
                 if (distanceSq < minDistanceSq) {
                     minDistanceSq = distanceSq;
@@ -2130,7 +2028,7 @@ public class FlowingFluidsFixesMinimal {
     public static boolean shouldProcessFluidInChunk(BlockPos pos) {
         if (!spatialOptimizationActive) return true;
         
-        // Get chunk coordinates
+        // Get chunk coordinates using helper methods
         int chunkX = pos.getX() >> 4;
         int chunkZ = pos.getZ() >> 4;
         long chunkKey = getChunkKey(chunkX, chunkZ);
@@ -2251,9 +2149,22 @@ public class FlowingFluidsFixesMinimal {
                           cachedMSPT > 20.0 ? 5 : // 5 chunks (80 blocks) during moderate MSPT
                           6; // 6 chunks (96 blocks) during low MSPT
         
-        // Get chunk coordinates
-        int chunkX = pos.getX() >> 4;
-        int chunkZ = pos.getZ() >> 4;
+        // Get chunk coordinates using reflection to avoid obfuscation issues
+        int chunkX, chunkZ;
+        try {
+            chunkX = (int) BlockPos.class.getMethod("getX").invoke(pos);
+            chunkZ = (int) BlockPos.class.getMethod("getZ").invoke(pos);
+        } catch (Exception e) {
+            // Fallback: use obfuscated names or skip processing
+            try {
+                chunkX = (int) BlockPos.class.getMethod("m_123341_").invoke(pos); // obfuscated getX
+                chunkZ = (int) BlockPos.class.getMethod("m_123342_").invoke(pos); // obfuscated getZ
+            } catch (Exception e2) {
+                return false; // Skip processing if both fail
+            }
+        }
+        chunkX = chunkX >> 4;
+        chunkZ = chunkZ >> 4;
         long chunkKey = getChunkKey(chunkX, chunkZ);
         
         // Check cache first
@@ -2275,8 +2186,19 @@ public class FlowingFluidsFixesMinimal {
                 for (int dz = -blockRadius; dz <= blockRadius; dz += 16) {
                     // Check if this chunk could contain players
                     // In production, this would check actual player positions in each chunk
-                    int checkChunkX = (pos.getX() + dx) >> 4;
-                    int checkChunkZ = (pos.getZ() + dz) >> 4;
+                    int checkChunkX, checkChunkZ;
+                    try {
+                        checkChunkX = ((int) BlockPos.class.getMethod("getX").invoke(pos) + dx) >> 4;
+                        checkChunkZ = ((int) BlockPos.class.getMethod("getZ").invoke(pos) + dz) >> 4;
+                    } catch (Exception e) {
+                        try {
+                            checkChunkX = ((int) BlockPos.class.getMethod("m_123341_").invoke(pos) + dx) >> 4; // obfuscated getX
+                            checkChunkZ = ((int) BlockPos.class.getMethod("m_123342_").invoke(pos) + dz) >> 4; // obfuscated getZ
+                        } catch (Exception e2) {
+                            nearPlayers = true; // Default to true if reflection fails
+                            break;
+                        }
+                    }
                     if (Math.abs(checkChunkX) <= spatialRadius && Math.abs(checkChunkZ) <= spatialRadius) {
                         nearPlayers = true;
                         break;
@@ -3232,7 +3154,7 @@ public class FlowingFluidsFixesMinimal {
             
             // OCEAN DETECTION - Special handling for large water bodies
             // Use reflection-based coordinate access to avoid obfuscation issues
-            int posY = getBlockPosY(pos);
+            int posY = pos.getY();
             if (posY < 63) { // Ocean level detection
                 // Count nearby water blocks to detect ocean operations
                 int nearbyWaterBlocks = 0;
@@ -3241,7 +3163,14 @@ public class FlowingFluidsFixesMinimal {
                         if (dx == 0 && dz == 0) continue;
                         BlockPos checkPos = safeOffset(pos, dx, 0, dz);
                         if (safeIsLoaded(level, checkPos)) {
-                            BlockState checkState = level.getBlockState(checkPos);
+                            BlockState checkState;
+                            try {
+                                // Use reflection to avoid method signature issues
+                                checkState = (BlockState) Level.class.getMethod("getBlockState", BlockPos.class).invoke(level, checkPos);
+                            } catch (Exception e) {
+                                // If reflection fails, skip this check
+                                continue;
+                            }
                             if (checkState.is(Blocks.WATER)) {
                                 nearbyWaterBlocks++;
                                 if (nearbyWaterBlocks > 15) { // Likely ocean operation
