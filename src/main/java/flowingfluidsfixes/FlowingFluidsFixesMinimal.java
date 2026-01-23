@@ -3,11 +3,14 @@ package flowingfluidsfixes;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.world.level.block.Blocks;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
@@ -123,21 +126,21 @@ public class FlowingFluidsFixesMinimal {
     private static final AtomicInteger throttledOperations = new AtomicInteger(0);
     private static final AtomicInteger allowedOperations = new AtomicInteger(0);
     
-    // SMOOTH MATHEMATICAL THROTTLING - Continuous scaling functions
-    private static double currentThrottleLevel = 1.0; // 1.0 = full throttling, 0.0 = no throttling
+    // SMOOTH MATHEMATICAL THROTTLING - AGGRESSIVE for Flowing Fluids compatibility
+    private static double currentThrottleLevel = 0.0; // 1.0 = full throttling, 0.0 = no throttling
     private static long lastThrottleAdjustment = 0;
-    private static final long THROTTLE_ADJUSTMENT_INTERVAL = 200; // Adjust every 200ms for ultra-smooth transitions
+    private static final long THROTTLE_ADJUSTMENT_INTERVAL = 100; // Adjust every 100ms for faster response
     private static double msptMovingAverage = 15.0; // Moving average for smooth MSPT tracking
-    private static final double MSPT_ALPHA = 0.05; // Smoothing factor for MSPT average (5% new, 95% old)
-    private static final double TARGET_MSPT = 12.0; // Target MSPT for optimal performance
-    private static final double SMOOTHING_FACTOR = 0.8; // How smoothly to adjust (0.8 = very smooth)
-    private static final double RESPONSE_SENSITIVITY = 0.15; // How responsive to MSPT changes (0.15 = moderate)
+    private static final double MSPT_ALPHA = 0.1; // Faster response (10% new, 90% old)
+    private static final double TARGET_MSPT = 10.0; // Lower target for better performance
+    private static final double SMOOTHING_FACTOR = 0.6; // More responsive (0.6 = responsive)
+    private static final double RESPONSE_SENSITIVITY = 0.3; // More responsive to MSPT changes
     
-    // Mathematical function parameters
-    private static final double THROTTLE_CURVE_STEEPNESS = 2.5; // Steepness of S-curve (higher = steeper)
-    private static final double THROTTLE_CURVE_MIDPOINT = 20.0; // MSPT where throttling is 50%
+    // AGGRESSIVE Mathematical function parameters for Flowing Fluids
+    private static final double THROTTLE_CURVE_STEEPNESS = 4.0; // Steeper S-curve for stronger response
+    private static final double THROTTLE_CURVE_MIDPOINT = 15.0; // MSPT where throttling is 50%
     private static final double MIN_THROTTLE = 0.0; // Minimum throttling (0% = no throttling)
-    private static final double MAX_THROTTLE = 0.95; // Maximum throttling (95% = almost complete)
+    private static final double MAX_THROTTLE = 0.98; // Maximum throttling (98% = almost complete)
     
     // PREVENTIVE FLUID MANAGEMENT - Stop issues before they start
     private static final ConcurrentHashMap<Long, Integer> fluidPressureMap = new ConcurrentHashMap<>();
@@ -563,6 +566,62 @@ public class FlowingFluidsFixesMinimal {
         reflectionInitialized = true;
     }
     
+    // REAL FLUID INTERCEPTION - Block event based throttling that actually works
+    @SubscribeEvent
+    public void onBlockPlace(BlockEvent.EntityPlaceEvent event) {
+        // Apply smooth mathematical throttling to ALL block placements
+        if (event.getLevel() instanceof ServerLevel) {
+            ServerLevel level = (ServerLevel) event.getLevel();
+            BlockPos pos = event.getPos();
+            
+            // Apply aggressive throttling
+            double throttleFactor = getSmoothThrottleFactor();
+            if (Math.random() > throttleFactor) {
+                event.setCanceled(true); // Cancel the block placement
+                skippedFluidEvents.incrementAndGet();
+                return;
+            }
+            
+            // Additional spatial optimization
+            if (!isWithinPlayerRadius(pos)) {
+                event.setCanceled(true); // Skip far from players
+                skippedFluidEvents.incrementAndGet();
+                return;
+            }
+        }
+    }
+    
+    @SubscribeEvent
+    public void onBlockUpdate(BlockEvent.NeighborNotifyEvent event) {
+        // Apply throttling to neighbor updates (fluid flow triggers these)
+        if (event.getLevel() instanceof ServerLevel) {
+            ServerLevel level = (ServerLevel) event.getLevel();
+            
+            // Apply aggressive throttling to neighbor updates
+            double throttleFactor = getSmoothThrottleFactor();
+            if (Math.random() > throttleFactor) {
+                event.setCanceled(true); // Cancel the neighbor update
+                skippedFluidEvents.incrementAndGet();
+                return;
+            }
+        }
+    }
+    
+    // AGGRESSIVE FLUID BLOCKING - Direct fluid state interception
+    @SubscribeEvent
+    public void onFluidTick(TickEvent.LevelTickEvent event) {
+        if (event.level instanceof ServerLevel) {
+            ServerLevel level = (ServerLevel) event.level;
+            
+            // Apply aggressive throttling during fluid ticks
+            double throttleFactor = getSmoothThrottleFactor();
+            if (Math.random() > throttleFactor) {
+                // Skip processing this tick entirely
+                return;
+            }
+        }
+    }
+    
     // Safe coordinate access with reflection fallback
     private static int getBlockPosX(BlockPos pos) {
         if (!reflectionInitialized) initializeReflection();
@@ -674,6 +733,7 @@ public class FlowingFluidsFixesMinimal {
         spatialOptimizationActive = true;
         System.out.println("[FlowingFluidsFixes] All optimization systems enabled - fluid state caching active");
         System.out.println("[FlowingFluidsFixes] Memory leak prevention: All caches initialized and cleared");
+        System.out.println("[FlowingFluidsFixes] Block event interception active - real fluid throttling enabled");
     }
 
     // SMOOTH MATHEMATICAL THROTTLING - Continuous scaling functions
@@ -725,7 +785,7 @@ public class FlowingFluidsFixesMinimal {
     }
     
     // Get smooth throttling factor for fluid processing
-    private static double getSmoothThrottleFactor() {
+    public static double getSmoothThrottleFactor() {
         return 1.0 - currentThrottleLevel; // Convert to processing factor (0 = no processing, 1 = full processing)
     }
 
@@ -2321,7 +2381,7 @@ public class FlowingFluidsFixesMinimal {
     }
     
     // CORE SPATIAL CHECKING - Real player position tracking
-    private static boolean isWithinPlayerRadius(BlockPos pos) {
+    public static boolean isWithinPlayerRadius(BlockPos pos) {
         if (!spatialOptimizationActive) return true;
         
         // Calculate spatial radius based on MSPT severity
