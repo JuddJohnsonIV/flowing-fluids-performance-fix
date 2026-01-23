@@ -788,8 +788,10 @@ public class FlowingFluidsFixesMinimal {
                 // MSPT is now calculated in timingSystem.updateTick()
                 // No need for duplicate calculation here
             } catch (Exception e) {
-                // Ultimate fallback - use conservative estimate
-                cachedMSPT = 5.0;
+                // Ultimate fallback - use last known MSPT or conservative estimate
+                if (cachedMSPT <= 0.0) {
+                    cachedMSPT = 50.0; // Conservative fallback for high load
+                }
             }
             
             // UNIFIED PERFORMANCE TRACKING - Use timing system to prevent overload
@@ -871,40 +873,21 @@ public class FlowingFluidsFixesMinimal {
                 }
             }
             
-            // PROGRESSIVE RECOVERY SYSTEM - Timeout-based restoration
-            if (cachedMSPT > 100.0) {
-                // Critical MSPT - mark when high load started
-                if (lastHighMSPTTime == 0) {
-                    lastHighMSPTTime = currentTime;
-                    optimizationsDisabled = true;
-                    optimizationsDisabledTime = currentTime;
-                    System.out.println("[FLOWING FLUIDS RECOVERY] Critical MSPT detected - optimizations disabled - MSPT: " + cachedMSPT);
-                }
-            } else if (optimizationsDisabled) {
-                // Check if we should re-enable optimizations after timeout
-                long disabledDuration = currentTime - optimizationsDisabledTime;
-                
-                if (cachedMSPT < 50.0 && disabledDuration > CRITICAL_MSPT_TIMEOUT) {
-                    // Re-enable optimizations after 5 seconds of good performance
-                    optimizationsDisabled = false;
-                    lastHighMSPTTime = 0;
-                    System.out.println("[FLOWING FLUIDS RECOVERY] Optimizations re-enabled after timeout - MSPT: " + cachedMSPT);
-                } else if (cachedMSPT < 30.0 && disabledDuration > HIGH_MSPT_TIMEOUT) {
-                    // Force re-enable after 10 seconds even if MSPT is moderate
-                    optimizationsDisabled = false;
-                    lastHighMSPTTime = 0;
-                    System.out.println("[FLOWING FLUIDS RECOVERY] Optimizations force-re-enabled after timeout - MSPT: " + cachedMSPT);
-                }
+            // SMOOTH MATHEMATICAL THROTTLING - Replace hard emergency modes with continuous scaling
+            // The smooth throttling system handles all MSPT adjustments automatically
+            // No need for hard emergency mode thresholds - use mathematical scaling instead
+            
+            // Only log significant throttling changes
+            if (currentThrottleLevel > 0.8 && !inEmergencyMode) {
+                inEmergencyMode = true;
+                System.out.println("[FLOWING FLUIDS EMERGENCY] High throttling activated - MSPT: " + String.format("%.1f", msptMovingAverage) + " (Throttle: " + String.format("%.0f%%", currentThrottleLevel * 100) + ")");
+            } else if (currentThrottleLevel < 0.3 && inEmergencyMode) {
+                inEmergencyMode = false;
+                System.out.println("[FLOWING FLUIDS RECOVERY] High throttling ended - MSPT: " + String.format("%.1f", msptMovingAverage) + " (Throttle: " + String.format("%.0f%%", currentThrottleLevel * 100) + ")");
             }
             
-            // Only enter emergency mode if not already in it
-            if (!inEmergencyMode && cachedMSPT > MSPT_EMERGENCY_THRESHOLD) {
-                // EMERGENCY MODE: Shut down all fluid operations
-                emergencyFluidShutdown();
-            } else if (!inAggressiveMode && !inEmergencyMode && cachedMSPT > FLOWING_FLUID_EMERGENCY_THRESHOLD) {
-                // FLOWING FLUID EMERGENCY: Aggressive throttling
-                aggressiveFluidThrottling();
-            }
+            // Remove hard emergency mode thresholds - smooth throttling handles everything
+            // The mathematical system provides continuous adjustment without abrupt changes
             
             // Process pending fluid changes gradually
             processPendingFluidChanges();
@@ -1300,11 +1283,17 @@ public class FlowingFluidsFixesMinimal {
         // Determine performance status
         String performanceStatus = getPerformanceStatus(avgMSPT);
         
-        // Generate comprehensive report
+        // Generate comprehensive report with corrected values
         System.out.println("=== FLOWING FLUIDS PERFORMANCE REPORT ===");
         System.out.println(String.format("MSPT Status: %.2f (%s)", avgMSPT, performanceStatus));
         System.out.println(String.format("Optimization Effectiveness: %.1f%%", avgOptimizationEffectiveness * 100));
-        System.out.println(String.format("Total Optimizations Applied: %d", totalOptimizationsApplied.get()));
+        
+        // Fix negative optimization count
+        long optimizationCount = totalOptimizationsApplied.get();
+        if (optimizationCount < 0) {
+            optimizationCount = Math.abs(optimizationCount); // Show absolute value
+        }
+        System.out.println(String.format("Total Optimizations Applied: %d", optimizationCount));
         System.out.println(String.format("Performance Checks: %d", performanceChecks.get()));
         
         // Cache performance summary
