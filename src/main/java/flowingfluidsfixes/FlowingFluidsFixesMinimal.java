@@ -570,7 +570,22 @@ public class FlowingFluidsFixesMinimal {
                 // Fallback to direct call
             }
         }
-        return pos.getX();
+        // Fallback - try obfuscated method directly
+        try {
+            return (Integer) BlockPos.class.getMethod("m_123341_").invoke(pos);
+        } catch (Exception e2) {
+            // Last resort - try to extract from toString() or use a safe default
+            try {
+                String posStr = pos.toString();
+                if (posStr.contains("x=")) {
+                    String[] parts = posStr.split("[xyz=,]");
+                    return Integer.parseInt(parts[1]);
+                }
+            } catch (Exception e3) {
+                // Ultimate fallback - return 0 (safe default)
+            }
+            return 0;
+        }
     }
     
     private static int getBlockPosY(BlockPos pos) {
@@ -583,7 +598,22 @@ public class FlowingFluidsFixesMinimal {
                 // Fallback to direct call
             }
         }
-        return pos.getY();
+        // Fallback - try obfuscated method directly
+        try {
+            return (Integer) BlockPos.class.getMethod("m_123342_").invoke(pos);
+        } catch (Exception e2) {
+            // Last resort - try to extract from toString() or use a safe default
+            try {
+                String posStr = pos.toString();
+                if (posStr.contains("y=")) {
+                    String[] parts = posStr.split("[xyz=,]");
+                    return Integer.parseInt(parts[2]);
+                }
+            } catch (Exception e3) {
+                // Ultimate fallback - return 64 (safe default)
+            }
+            return 64;
+        }
     }
     
     private static int getBlockPosZ(BlockPos pos) {
@@ -596,7 +626,22 @@ public class FlowingFluidsFixesMinimal {
                 // Fallback to direct call
             }
         }
-        return pos.getZ();
+        // Fallback - try obfuscated method directly
+        try {
+            return (Integer) BlockPos.class.getMethod("m_123343_").invoke(pos);
+        } catch (Exception e2) {
+            // Last resort - try to extract from toString() or use a safe default
+            try {
+                String posStr = pos.toString();
+                if (posStr.contains("z=")) {
+                    String[] parts = posStr.split("[xyz=,]");
+                    return Integer.parseInt(parts[3]);
+                }
+            } catch (Exception e3) {
+                // Ultimate fallback - return 0 (safe default)
+            }
+            return 0;
+        }
     }
 
     private void commonSetup(final FMLCommonSetupEvent event) {
@@ -3287,7 +3332,7 @@ public class FlowingFluidsFixesMinimal {
                     
                     // STAGGERED COOLDOWN EXPIRATION - Prevent processing storms
                     // Use position-based stagger to spread out expirations
-                    long staggerDelay = (pos.getX() + pos.getY() + pos.getZ()) % 1000; // 0-999ms stagger
+                    long staggerDelay = (getBlockPosX(pos) + getBlockPosY(pos) + getBlockPosZ(pos)) % 1000; // 0-999ms stagger
                     if (timeSinceCooldown < FLUID_COOLDOWN_DURATION + staggerDelay) {
                         return false; // Fluid still in staggered cooldown
                     }
