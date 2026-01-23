@@ -17,6 +17,7 @@ import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
 import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.level.BlockEvent;
+import net.minecraftforge.event.level.LevelEvent;
 import net.minecraftforge.common.MinecraftForge;
 
 import java.util.concurrent.ConcurrentHashMap;
@@ -125,6 +126,9 @@ public class FlowingFluidsFixesMinimal {
     private static final AtomicInteger operationsThisTick = new AtomicInteger(0);
     private static final AtomicInteger throttledOperations = new AtomicInteger(0);
     private static final AtomicInteger allowedOperations = new AtomicInteger(0);
+    
+    // AGGRESSIVE WORLD ACCESS BLOCKING - Direct level operation interception
+    private static volatile boolean blockLevelOperations = false;
     
     // SMOOTH MATHEMATICAL THROTTLING - AGGRESSIVE for Flowing Fluids compatibility
     private static double currentThrottleLevel = 0.0; // 1.0 = full throttling, 0.0 = no throttling
@@ -566,12 +570,44 @@ public class FlowingFluidsFixesMinimal {
         reflectionInitialized = true;
     }
     
+    // AGGRESSIVE WORLD ACCESS INTERCEPTION - Directly blocks Flowing Fluids operations
+    @SubscribeEvent
+    public void onLevelTick(TickEvent.LevelTickEvent event) {
+        if (event.level instanceof ServerLevel) {
+            // Apply aggressive throttling to ALL level operations
+            double throttleFactor = getSmoothThrottleFactor();
+            if (Math.random() > throttleFactor) {
+                // Set a flag to block all subsequent operations in this tick
+                blockLevelOperations = true;
+                return;
+            }
+            blockLevelOperations = false;
+        }
+    }
+    
+    @SubscribeEvent
+    public void onChunkLoad(LevelEvent.Load event) {
+        if (blockLevelOperations) {
+            event.setCanceled(true); // Block chunk loading during high throttling
+            skippedFluidEvents.incrementAndGet();
+            return;
+        }
+    }
+    
+    @SubscribeEvent
+    public void onChunkUnload(LevelEvent.Unload event) {
+        if (blockLevelOperations) {
+            event.setCanceled(true); // Block chunk unloading during high throttling
+            skippedFluidEvents.incrementAndGet();
+            return;
+        }
+    }
+    
     // REAL FLUID INTERCEPTION - Block event based throttling that actually works
     @SubscribeEvent
     public void onBlockPlace(BlockEvent.EntityPlaceEvent event) {
         // Apply smooth mathematical throttling to ALL block placements
         if (event.getLevel() instanceof ServerLevel) {
-            ServerLevel level = (ServerLevel) event.getLevel();
             BlockPos pos = event.getPos();
             
             // Apply aggressive throttling
@@ -595,8 +631,6 @@ public class FlowingFluidsFixesMinimal {
     public void onBlockUpdate(BlockEvent.NeighborNotifyEvent event) {
         // Apply throttling to neighbor updates (fluid flow triggers these)
         if (event.getLevel() instanceof ServerLevel) {
-            ServerLevel level = (ServerLevel) event.getLevel();
-            
             // Apply aggressive throttling to neighbor updates
             double throttleFactor = getSmoothThrottleFactor();
             if (Math.random() > throttleFactor) {
@@ -611,8 +645,6 @@ public class FlowingFluidsFixesMinimal {
     @SubscribeEvent
     public void onFluidTick(TickEvent.LevelTickEvent event) {
         if (event.level instanceof ServerLevel) {
-            ServerLevel level = (ServerLevel) event.level;
-            
             // Apply aggressive throttling during fluid ticks
             double throttleFactor = getSmoothThrottleFactor();
             if (Math.random() > throttleFactor) {
