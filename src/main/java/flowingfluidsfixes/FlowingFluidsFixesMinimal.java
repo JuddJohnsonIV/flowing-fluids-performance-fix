@@ -723,11 +723,14 @@ public class FlowingFluidsFixesMinimal {
         // Sigmoid function: f(x) = L / (1 + e^(-k(x - x0)))
         // Where L = max value, k = steepness, x0 = midpoint
         
+        // Apply response sensitivity to adjust steepness based on conditions
+        double adjustedSteepness = THROTTLE_CURVE_STEEPNESS * (1.0 + RESPONSE_SENSITIVITY);
+        
         // Normalize MSPT to 0-1 range around target
         double normalizedMSPT = (mspt - TARGET_MSPT) / THROTTLE_CURVE_MIDPOINT;
         
         // Apply sigmoid function
-        double sigmoid = 1.0 / (1.0 + Math.exp(-THROTTLE_CURVE_STEEPNESS * normalizedMSPT));
+        double sigmoid = 1.0 / (1.0 + Math.exp(-adjustedSteepness * normalizedMSPT));
         
         // Scale to throttle range
         return MIN_THROTTLE + (MAX_THROTTLE - MIN_THROTTLE) * sigmoid;
