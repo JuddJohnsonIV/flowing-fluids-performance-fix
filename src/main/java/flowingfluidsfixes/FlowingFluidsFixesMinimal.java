@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.BitSet;
 import java.util.function.Supplier;
 import net.minecraft.server.level.ServerPlayer;
+import java.lang.reflect.Method;
 
 @Mod(FlowingFluidsFixesMinimal.MOD_ID)
 public class FlowingFluidsFixesMinimal {
@@ -147,6 +148,12 @@ public class FlowingFluidsFixesMinimal {
     
     // OPTIMIZED: Cache lowest player Y to avoid repeated calculations
     private static volatile int lowestPlayerY = 320; // Start at max height
+    
+    // REFLECTION-BASED COORDINATE ACCESS - Handle obfuscated environments
+    private static Method blockPosGetX;
+    private static Method blockPosGetY;
+    private static Method blockPosGetZ;
+    private static boolean reflectionInitialized = false;
     private static long lastPlayerYUpdate = 0;
     
     // Preventive thresholds
@@ -347,9 +354,9 @@ public class FlowingFluidsFixesMinimal {
                 return (BlockPos) offsetMethod.invoke(pos, dx, dy, dz);
             } catch (Exception ex) {
                 // Ultimate fallback: Create new BlockPos manually
-                int newX = pos.getX() + dx;
-                int newY = pos.getY() + dy;
-                int newZ = pos.getZ() + dz;
+                int newX = getBlockPosX(pos) + dx;
+                int newY = getBlockPosY(pos) + dy;
+                int newZ = getBlockPosZ(pos) + dz;
                 try {
                     // Try BlockPos constructor
                     java.lang.reflect.Constructor<BlockPos> constructor = BlockPos.class.getConstructor(int.class, int.class, int.class);
@@ -375,8 +382,8 @@ public class FlowingFluidsFixesMinimal {
                 // Ultimate fallback: Check if chunk exists (less safe but prevents crash)
                 try {
                     // Try to get chunk at position
-                    int chunkX = pos.getX() >> 4;
-                    int chunkZ = pos.getZ() >> 4;
+                    int chunkX = getBlockPosX(pos) >> 4;
+                    int chunkZ = getBlockPosZ(pos) >> 4;
                     java.lang.reflect.Method getChunkMethod = Level.class.getMethod("getChunk", int.class, int.class);
                     Object chunk = getChunkMethod.invoke(level, chunkX, chunkZ);
                     return chunk != null;
@@ -518,6 +525,78 @@ public class FlowingFluidsFixesMinimal {
         // Use the event parameter to fix warning
         System.out.println("[FlowingFluidsFixes] Constructor initialized with event system");
         System.out.println("[FlowingFluidsFixes] Event bus registered successfully");
+        
+        // Initialize reflection for coordinate access
+        initializeReflection();
+    }
+
+    // REFLECTION-BASED COORDINATE ACCESS - Handle obfuscated environments
+    private static void initializeReflection() {
+        if (reflectionInitialized) return;
+        
+        try {
+            // Try deobfuscated methods first
+            blockPosGetX = BlockPos.class.getMethod("getX");
+            blockPosGetY = BlockPos.class.getMethod("getY");
+            blockPosGetZ = BlockPos.class.getMethod("getZ");
+            System.out.println("[FlowingFluidsFixes] Using deobfuscated coordinate methods");
+        } catch (NoSuchMethodException e) {
+            try {
+                // Try obfuscated methods (MCP mappings)
+                blockPosGetX = BlockPos.class.getMethod("m_123341_");
+                blockPosGetY = BlockPos.class.getMethod("m_123342_");
+                blockPosGetZ = BlockPos.class.getMethod("m_123343_");
+                System.out.println("[FlowingFluidsFixes] Using obfuscated coordinate methods");
+            } catch (NoSuchMethodException e2) {
+                System.err.println("[FlowingFluidsFixes] Failed to initialize coordinate reflection: " + e2.getMessage());
+                // Fallback to direct calls (may crash in obfuscated environments)
+                blockPosGetX = null;
+                blockPosGetY = null;
+                blockPosGetZ = null;
+            }
+        }
+        
+        reflectionInitialized = true;
+    }
+    
+    // Safe coordinate access with reflection fallback
+    private static int getBlockPosX(BlockPos pos) {
+        if (!reflectionInitialized) initializeReflection();
+        
+        if (blockPosGetX != null) {
+            try {
+                return (Integer) blockPosGetX.invoke(pos);
+            } catch (Exception e) {
+                // Fallback to direct call
+            }
+        }
+        return pos.getX();
+    }
+    
+    private static int getBlockPosY(BlockPos pos) {
+        if (!reflectionInitialized) initializeReflection();
+        
+        if (blockPosGetY != null) {
+            try {
+                return (Integer) blockPosGetY.invoke(pos);
+            } catch (Exception e) {
+                // Fallback to direct call
+            }
+        }
+        return pos.getY();
+    }
+    
+    private static int getBlockPosZ(BlockPos pos) {
+        if (!reflectionInitialized) initializeReflection();
+        
+        if (blockPosGetZ != null) {
+            try {
+                return (Integer) blockPosGetZ.invoke(pos);
+            } catch (Exception e) {
+                // Fallback to direct call
+            }
+        }
+        return pos.getZ();
     }
 
     private void commonSetup(final FMLCommonSetupEvent event) {
@@ -877,8 +956,8 @@ public class FlowingFluidsFixesMinimal {
             if (chunksScanned >= maxChunksToScan) break;
             
             // Get player's chunk
-            int playerChunkX = player.blockPosition().getX() >> 4;
-            int playerChunkZ = player.blockPosition().getZ() >> 4;
+            int playerChunkX = getBlockPosX(player.blockPosition()) >> 4;
+            int playerChunkZ = getBlockPosZ(player.blockPosition()) >> 4;
             
             // Scan nearby chunks (3x3 area around player)
             for (int dx = -1; dx <= 1; dx++) {
@@ -1335,7 +1414,7 @@ public class FlowingFluidsFixesMinimal {
     
     // Fluid pressure monitoring
     private static boolean checkFluidPressure(ServerLevel level, BlockPos pos) {
-        long chunkKey = getChunkKey(pos.getX() >> 4, pos.getZ() >> 4);
+        long chunkKey = getChunkKey(getBlockPosX(pos) >> 4, getBlockPosZ(pos) >> 4);
         
         // Count fluids in this chunk
         int currentPressure = fluidPressureMap.getOrDefault(chunkKey, 0);
@@ -1350,7 +1429,7 @@ public class FlowingFluidsFixesMinimal {
     }
     
     private static void updateFluidPressure(BlockPos pos, boolean isFluid) {
-        long chunkKey = getChunkKey(pos.getX() >> 4, pos.getZ() >> 4);
+        long chunkKey = getChunkKey(getBlockPosX(pos) >> 4, getBlockPosZ(pos) >> 4);
         
         if (isFluid) {
             fluidPressureMap.merge(chunkKey, 1, Integer::sum);
@@ -1361,7 +1440,7 @@ public class FlowingFluidsFixesMinimal {
     
     // Time-distributed processing
     private static boolean shouldProcessFluidNow(BlockPos pos) {
-        long chunkKey = getChunkKey(pos.getX() >> 4, pos.getZ() >> 4);
+        long chunkKey = getChunkKey(getBlockPosX(pos) >> 4, getBlockPosZ(pos) >> 4);
         long currentTime = System.currentTimeMillis();
         
         // Check if this chunk should process now
@@ -1380,7 +1459,7 @@ public class FlowingFluidsFixesMinimal {
     
     // Flow rate limiting
     private static boolean shouldAllowFlow(BlockPos pos) {
-        long chunkKey = getChunkKey(pos.getX() >> 4, pos.getZ() >> 4);
+        long chunkKey = getChunkKey(getBlockPosX(pos) >> 4, getBlockPosZ(pos) >> 4);
         long currentTime = System.currentTimeMillis();
         
         // Reset counter every second
@@ -1404,7 +1483,7 @@ public class FlowingFluidsFixesMinimal {
     private static boolean isPotentialCascadeSource(ServerLevel level, BlockPos pos) {
         // Check if this position could become a cascade source
         int nearbyFluids = countFluidsInRadius(level, pos, 8);
-        int elevation = pos.getY();
+        int elevation = getBlockPosY(pos);
         
         // High elevation + many nearby fluids = potential cascade
         return (elevation > 60 && nearbyFluids > 20);
@@ -1413,7 +1492,7 @@ public class FlowingFluidsFixesMinimal {
     private static void applyPredictiveThrottling(ServerLevel level, BlockPos pos) {
         if (isPotentialCascadeSource(level, pos)) {
             // Apply gentle throttling to prevent cascade
-            long chunkKey = getChunkKey(pos.getX() >> 4, pos.getZ() >> 4);
+            long chunkKey = getChunkKey(getBlockPosX(pos) >> 4, getBlockPosZ(pos) >> 4);
             
             // Increase processing delay for this chunk
             Long currentDelay = chunkNextProcessTime.get(chunkKey);
@@ -1435,7 +1514,7 @@ public class FlowingFluidsFixesMinimal {
     
     private static String getZone(BlockPos pos) {
         // Simple zone classification
-        if (pos.getY() < 50) return "OCEAN";
+        if (getBlockPosY(pos) < 50) return "OCEAN";
         if (isNearWaterBody(pos)) return "RIVER";
         return "NORMAL";
     }
@@ -1453,7 +1532,7 @@ public class FlowingFluidsFixesMinimal {
                 BlockPos checkPos = safeOffset(pos, dx, 0, dz);
                 // Use checkPos to check for water bodies (simplified check)
                 // In production, you'd check if there's water nearby using checkPos
-                if (checkPos.getY() < 60) return true; // Simple ocean detection
+                if (getBlockPosY(checkPos) < 60) return true; // Simple ocean detection
             }
         }
         return false;
@@ -1467,7 +1546,7 @@ public class FlowingFluidsFixesMinimal {
             return; // Reject new fluid updates during performance issues
         }
         
-        long chunkKey = getChunkKey(pos.getX() >> 4, pos.getZ() >> 4);
+        long chunkKey = getChunkKey(getBlockPosX(pos) >> 4, getBlockPosZ(pos) >> 4);
         
         // Add to pending queue
         pendingFluidChanges.computeIfAbsent(chunkKey, k -> new ArrayList<>()).add(pos);
@@ -1550,9 +1629,9 @@ public class FlowingFluidsFixesMinimal {
     private static final ConcurrentHashMap<Long, Integer> distanceCache = new ConcurrentHashMap<>();
     
     private static int getSquaredDistance(BlockPos pos1, BlockPos pos2) {
-        int dx = pos1.getX() - pos2.getX();
-        int dy = pos1.getY() - pos2.getY();
-        int dz = pos1.getZ() - pos2.getZ();
+        int dx = getBlockPosX(pos1) - getBlockPosX(pos2);
+        int dy = getBlockPosY(pos1) - getBlockPosY(pos2);
+        int dz = getBlockPosZ(pos1) - getBlockPosZ(pos2);
         return dx*dx + dy*dy + dz*dz;
     }
     
@@ -1585,7 +1664,7 @@ public class FlowingFluidsFixesMinimal {
     private static String getFluidKeyOptimized(BlockPos pos) {
         StringBuilder sb = keyBuilder.get();
         sb.setLength(0);
-        sb.append(pos.getX()).append(',').append(pos.getY()).append(',').append(pos.getZ());
+        sb.append(getBlockPosX(pos)).append(',').append(getBlockPosY(pos)).append(',').append(getBlockPosZ(pos));
         return sb.toString();
     }
     
@@ -1658,13 +1737,13 @@ public class FlowingFluidsFixesMinimal {
     // HIGH PRIORITY: Visibility-Based Culling
     private static boolean isFluidVisible(BlockPos pos) {
         // Use VISIBILITY_DEPTH constant for consistent visibility checking
-        return pos.getY() >= (lowestPlayerY - VISIBILITY_DEPTH);
+        return getBlockPosY(pos) >= (lowestPlayerY - VISIBILITY_DEPTH);
     }
     
     // HIGH PRIORITY: Deep Fluid Freezing
     private static boolean shouldFreezeDeepFluid(BlockPos pos) {
         // OPTIMIZED: Simple check without expensive calculations
-        if (pos.getY() < -80) {
+        if (getBlockPosY(pos) < -80) {
             // Very deep fluids - freeze if not near ocean holes
             return !isNearOceanHoleSurface(pos);
         }
@@ -1675,9 +1754,9 @@ public class FlowingFluidsFixesMinimal {
     private static boolean isNearOceanHoleSurface(BlockPos pos) {
         // OPTIMIZED: Simple distance check without expensive calculations
         for (BlockPos hole : knownOceanHoles) {
-            int dx = Math.abs(pos.getX() - hole.getX());
-            int dy = Math.abs(pos.getY() - hole.getY());
-            int dz = Math.abs(pos.getZ() - hole.getZ());
+            int dx = Math.abs(getBlockPosX(pos) - getBlockPosX(hole));
+            int dy = Math.abs(getBlockPosY(pos) - getBlockPosY(hole));
+            int dz = Math.abs(getBlockPosZ(pos) - getBlockPosZ(hole));
             
             // Simple Manhattan distance check (cheaper than Euclidean)
             if (dy <= 20 && (dx <= 50 && dz <= 50)) {
@@ -1689,7 +1768,7 @@ public class FlowingFluidsFixesMinimal {
     
     // MEDIUM PRIORITY: Depth-Based Processing
     private static int getDepthProcessingLevel(BlockPos pos) {
-        int depth = pos.getY();
+        int depth = getBlockPosY(pos);
         
         // OPTIMIZED: Simple array lookup instead of chained if-statements
         for (int i = 0; i < DEPTH_THRESHOLDS.length; i++) {
@@ -1719,7 +1798,7 @@ public class FlowingFluidsFixesMinimal {
         
         int minY = 320; // Start at max height
         for (ServerPlayer player : level.players()) {
-            int playerY = player.blockPosition().getY();
+            int playerY = getBlockPosY(player.blockPosition());
             if (playerY < minY) {
                 minY = playerY;
             }
@@ -1745,7 +1824,7 @@ public class FlowingFluidsFixesMinimal {
     private static final ConcurrentHashMap<Long, Integer> fluidDepthCache = new ConcurrentHashMap<>();
     
     private static int getCachedDepthLevel(BlockPos pos) {
-        long posKey = getChunkKey(pos.getX() >> 4, pos.getZ() >> 4);
+        long posKey = getChunkKey(getBlockPosX(pos) >> 4, getBlockPosZ(pos) >> 4);
         
         // OPTIMIZED: Simple cache without expensive calculations
         return fluidDepthCache.computeIfAbsent(posKey, k -> getDepthProcessingLevel(pos));
@@ -1821,7 +1900,7 @@ public class FlowingFluidsFixesMinimal {
     }
     
     private static long getPosKey(BlockPos pos) {
-        return ((long)pos.getX() << 42) | ((long)pos.getY() << 20) | (pos.getZ() & 0xFFFFF);
+        return ((long)getBlockPosX(pos) << 42) | ((long)getBlockPosY(pos) << 20) | (getBlockPosZ(pos) & 0xFFFFF);
     }
     
     private static BlockPos getPosFromLong(long key) {
@@ -1958,7 +2037,7 @@ public class FlowingFluidsFixesMinimal {
             }
             
             for (net.minecraft.server.level.ServerPlayer player : players) {
-                double distanceSq = player.distanceToSqr(pos.getX(), pos.getY(), pos.getZ());
+                double distanceSq = player.distanceToSqr(getBlockPosX(pos), getBlockPosY(pos), getBlockPosZ(pos));
                 if (distanceSq < minDistanceSq) {
                     minDistanceSq = distanceSq;
                 }
@@ -2029,8 +2108,8 @@ public class FlowingFluidsFixesMinimal {
         if (!spatialOptimizationActive) return true;
         
         // Get chunk coordinates using helper methods
-        int chunkX = pos.getX() >> 4;
-        int chunkZ = pos.getZ() >> 4;
+        int chunkX = getBlockPosX(pos) >> 4;
+        int chunkZ = getBlockPosZ(pos) >> 4;
         long chunkKey = getChunkKey(chunkX, chunkZ);
         
         // Check if chunk is near players (spatial partitioning)
@@ -2088,8 +2167,8 @@ public class FlowingFluidsFixesMinimal {
     public static void addFluidToChunkGroup(BlockPos pos) {
         if (!spatialOptimizationActive) return;
         
-        int chunkX = pos.getX() >> 4;
-        int chunkZ = pos.getZ() >> 4;
+        int chunkX = getBlockPosX(pos) >> 4;
+        int chunkZ = getBlockPosZ(pos) >> 4;
         long chunkKey = getChunkKey(chunkX, chunkZ);
         
         // Add fluid to chunk group
@@ -2105,8 +2184,8 @@ public class FlowingFluidsFixesMinimal {
     public static int getChunkProcessingPriority(BlockPos pos) {
         if (!spatialOptimizationActive) return 1;
         
-        int chunkX = pos.getX() >> 4;
-        int chunkZ = pos.getZ() >> 4;
+        int chunkX = getBlockPosX(pos) >> 4;
+        int chunkZ = getBlockPosZ(pos) >> 4;
         long chunkKey = getChunkKey(chunkX, chunkZ);
         
         return chunkProcessingPriority.getOrDefault(chunkKey, 1);
@@ -2130,7 +2209,7 @@ public class FlowingFluidsFixesMinimal {
         try {
             // REAL PLAYER POSITION TRACKING - Check actual player positions
             return serverLevel.players().stream().anyMatch(player -> {
-                double distanceSq = player.distanceToSqr(pos.getX(), pos.getY(), pos.getZ());
+                double distanceSq = player.distanceToSqr(getBlockPosX(pos), getBlockPosY(pos), getBlockPosZ(pos));
                 return distanceSq <= radiusSq;
             });
         } catch (Exception e) {
@@ -2290,7 +2369,7 @@ public class FlowingFluidsFixesMinimal {
         }
         
         // Use isWithinDistance for additional distance checks
-        BlockPos checkPos = new BlockPos(pos.getX(), pos.getY(), pos.getZ());
+        BlockPos checkPos = new BlockPos(getBlockPosX(pos), getBlockPosY(pos), getBlockPosZ(pos));
         if (!isWithinDistance(checkPos, new BlockPos(0, 0, 0), 256)) {
             shouldAllow = false; // Too far from origin
             skippedFluidEvents.incrementAndGet();
@@ -2335,7 +2414,7 @@ public class FlowingFluidsFixesMinimal {
         }
         
         // Use optimized chunk key for caching
-        long chunkKey = getChunkKeyOptimized(pos.getX() >> 4, pos.getZ() >> 4);
+        long chunkKey = getChunkKeyOptimized(getBlockPosX(pos) >> 4, getBlockPosZ(pos) >> 4);
         Long lastProcessed = chunkLastProcessed.get(chunkKey);
         if (lastProcessed != null && (System.currentTimeMillis() - lastProcessed) < CHUNK_PROCESSING_COOLDOWN) {
             shouldAllow = false; // Recently processed
@@ -2411,9 +2490,9 @@ public class FlowingFluidsFixesMinimal {
             // OPTIMIZED: Use squared distance to avoid expensive Math.sqrt
             long radiusSq = OCEAN_HOLE_RADIUS * OCEAN_HOLE_RADIUS;
             for (BlockPos oceanHole : knownOceanHoles) {
-                long dx = pos.getX() - oceanHole.getX();
-                long dy = pos.getY() - oceanHole.getY();
-                long dz = pos.getZ() - oceanHole.getZ();
+                long dx = getBlockPosX(pos) - getBlockPosX(oceanHole);
+                long dy = getBlockPosY(pos) - getBlockPosY(oceanHole);
+                long dz = getBlockPosZ(pos) - getBlockPosZ(oceanHole);
                 long distanceSq = dx*dx + dy*dy + dz*dz;
                 
                 if (distanceSq <= radiusSq) {
@@ -2438,7 +2517,7 @@ public class FlowingFluidsFixesMinimal {
         }
         
         // HIGH PRIORITY: Proximity Filtering
-        if (pos.getY() < DEEP_FLUID_THRESHOLD && !isNearOceanHoleSurface(pos)) {
+        if (getBlockPosY(pos) < DEEP_FLUID_THRESHOLD && !isNearOceanHoleSurface(pos)) {
             shouldAllow = false; // Deep fluid far from ocean hole
             skippedDeepFluids.incrementAndGet();
             return shouldAllow;
@@ -2534,9 +2613,9 @@ public class FlowingFluidsFixesMinimal {
                     double radiusSq = currentRadius * currentRadius;
                     
                     for (net.minecraft.server.level.ServerPlayer player : level.players()) {
-                        double dx = player.getX() - pos.getX();
-                        double dy = player.getY() - pos.getY();
-                        double dz = player.getZ() - pos.getZ();
+                        double dx = player.getX() - getBlockPosX(pos);
+                        double dy = player.getY() - getBlockPosY(pos);
+                        double dz = player.getZ() - getBlockPosZ(pos);
                         double distanceSq = dx*dx + dy*dy + dz*dz;
                         
                         if (distanceSq <= radiusSq) {
@@ -2611,7 +2690,7 @@ public class FlowingFluidsFixesMinimal {
         boolean chunkRecentlyProcessed = false;
         
         // 1. Chunk processing check (1-second cooldown)
-        long chunkKey = getChunkKey(pos.getX() >> 4, pos.getZ() >> 4);
+        long chunkKey = getChunkKey(getBlockPosX(pos) >> 4, getBlockPosZ(pos) >> 4);
         Long lastChunkProcessed = chunkLastProcessed.get(chunkKey);
         if (lastChunkProcessed != null && (System.currentTimeMillis() - lastChunkProcessed) < CHUNK_PROCESSING_COOLDOWN) {
             chunkRecentlyProcessed = true;
@@ -2626,7 +2705,7 @@ public class FlowingFluidsFixesMinimal {
         spatialOperations.incrementAndGet(); // Use the field
         
         // 2. Ocean hole detection (only if chunk allows processing)
-        if (!chunkRecentlyProcessed && pos.getY() <= 10) {
+        if (!chunkRecentlyProcessed && getBlockPosY(pos) <= 10) {
             isOceanHole = isNearBedrockWithVoid(level, pos);
             if (isOceanHole) {
                 // 99% skip rate for ocean holes
@@ -2655,12 +2734,12 @@ public class FlowingFluidsFixesMinimal {
     
     // Simplified helper methods - SAME functionality, less redundancy
     private static boolean isNearBedrockWithVoid(ServerLevel level, BlockPos pos) {
-        if (pos.getY() > 5) return false;
+        if (getBlockPosY(pos) > 5) return false;
         
         BlockPos below = pos.below();
         BlockState belowState = level.getBlockState(below);
         return belowState.isAir() || belowState.is(Blocks.VOID_AIR) || 
-               (below.getY() <= 0 && belowState.is(Blocks.BEDROCK));
+               (getBlockPosY(below) <= 0 && belowState.is(Blocks.BEDROCK));
     }
     
     private static boolean hasFlowingNeighbors(ServerLevel level, BlockPos pos) {
@@ -2748,9 +2827,9 @@ public class FlowingFluidsFixesMinimal {
         
         // Check player proximity - Use early return pattern
         for (net.minecraft.server.level.ServerPlayer player : level.players()) {
-            double dx = player.getX() - pos.getX();
-            double dy = player.getY() - pos.getY();
-            double dz = player.getZ() - pos.getZ();
+            double dx = player.getX() - getBlockPosX(pos);
+            double dy = player.getY() - getBlockPosY(pos);
+            double dz = player.getZ() - getBlockPosZ(pos);
             
             if (dx*dx + dy*dy + dz*dz <= 64*64) { // Within 64 blocks
                 priority += 2;
@@ -2961,9 +3040,9 @@ public class FlowingFluidsFixesMinimal {
     
     public static void invalidateFluidCacheArea(BlockPos center, int radius) {
         // Invalidate cache in area around position (for explosions, large changes)
-        for (int x = center.getX() - radius; x <= center.getX() + radius; x++) {
-            for (int y = center.getY() - radius; y <= center.getY() + radius; y++) {
-                for (int z = center.getZ() - radius; z <= center.getZ() + radius; z++) {
+        for (int x = getBlockPosX(center) - radius; x <= getBlockPosX(center) + radius; x++) {
+            for (int y = getBlockPosY(center) - radius; y <= getBlockPosY(center) + radius; y++) {
+                for (int z = getBlockPosZ(center) - radius; z <= getBlockPosZ(center) + radius; z++) {
                     BlockPos pos = new BlockPos(x, y, z);
                     invalidateFluidCache(pos);
                 }
@@ -3069,9 +3148,9 @@ public class FlowingFluidsFixesMinimal {
     public static boolean isAffectedByWorldChange(BlockPos pos) {
         // Check if position is near recent explosions
         for (BlockPos explosion : recentExplosions) {
-            double distanceSq = Math.pow(pos.getX() - explosion.getX(), 2) + 
-                               Math.pow(pos.getY() - explosion.getY(), 2) + 
-                               Math.pow(pos.getZ() - explosion.getZ(), 2);
+            double distanceSq = Math.pow(getBlockPosX(pos) - getBlockPosX(explosion), 2) + 
+                               Math.pow(getBlockPosY(pos) - getBlockPosY(explosion), 2) + 
+                               Math.pow(getBlockPosZ(pos) - getBlockPosZ(explosion), 2);
             if (distanceSq <= 64) { // 8 blocks radius
                 return true;
             }
@@ -3079,9 +3158,9 @@ public class FlowingFluidsFixesMinimal {
         
         // Check if position is near recent block updates
         for (BlockPos blockUpdate : recentBlockUpdates) {
-            double distanceSq = Math.pow(pos.getX() - blockUpdate.getX(), 2) + 
-                               Math.pow(pos.getY() - blockUpdate.getY(), 2) + 
-                               Math.pow(pos.getZ() - blockUpdate.getZ(), 2);
+            double distanceSq = Math.pow(getBlockPosX(pos) - getBlockPosX(blockUpdate), 2) + 
+                               Math.pow(getBlockPosY(pos) - getBlockPosY(blockUpdate), 2) + 
+                               Math.pow(getBlockPosZ(pos) - getBlockPosZ(blockUpdate), 2);
             if (distanceSq <= 9) { // 3 blocks radius
                 return true;
             }
@@ -3154,7 +3233,7 @@ public class FlowingFluidsFixesMinimal {
             
             // OCEAN DETECTION - Special handling for large water bodies
             // Use reflection-based coordinate access to avoid obfuscation issues
-            int posY = pos.getY();
+            int posY = getBlockPosY(pos);
             if (posY < 63) { // Ocean level detection
                 // Count nearby water blocks to detect ocean operations
                 int nearbyWaterBlocks = 0;
@@ -3300,7 +3379,7 @@ public class FlowingFluidsFixesMinimal {
         }
         
         // CHUNK PROCESSING FLAGS - Track chunk processing
-        long chunkKey = getChunkKey(pos.getX() >> 4, pos.getZ() >> 4);
+        long chunkKey = getChunkKey(getBlockPosX(pos) >> 4, getBlockPosZ(pos) >> 4);
         int chunkIndex = Math.abs((int) chunkKey) % 1000;
         if (chunkProcessingFlags.get(chunkIndex)) {
             skippedFluidEvents.incrementAndGet();
