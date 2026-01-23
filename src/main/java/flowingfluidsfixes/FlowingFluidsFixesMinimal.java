@@ -313,10 +313,6 @@ public class FlowingFluidsFixesMinimal {
     private static final AtomicInteger worldChangeEvents = new AtomicInteger(0);
     private static final AtomicInteger cacheInvalidations = new AtomicInteger(0);
     
-    // SPARK PROFILE EMERGENCY THROTTLING TRACKING
-    private static final AtomicInteger emergencyActivations = new AtomicInteger(0);
-    private static final AtomicInteger aggressiveThrottlingActivations = new AtomicInteger(0);
-    
     // EMERGENCY RECOVERY MANAGEMENT - Prevent rapid on/off cycling
     private static long lastEmergencyTime = 0;
     private static final long emergencyDuration = 5000; // 5 seconds minimum emergency duration
@@ -2126,10 +2122,18 @@ public class FlowingFluidsFixesMinimal {
             // OPTIMIZED: Use squared distance to avoid expensive Math.sqrt
             double minDistanceSq = Double.MAX_VALUE;
             
-            // Use reflection to get players list
+            // Use reflection to get players list with type safety
             java.util.List<net.minecraft.server.level.ServerPlayer> players;
             try {
-                players = (java.util.List<net.minecraft.server.level.ServerPlayer>) ServerLevel.class.getMethod("m_6907_").invoke(serverLevel);
+                Object playersObj = ServerLevel.class.getMethod("m_6907_").invoke(serverLevel);
+                if (playersObj instanceof java.util.List) {
+                    @SuppressWarnings("unchecked")
+                    java.util.List<net.minecraft.server.level.ServerPlayer> castPlayers = 
+                        (java.util.List<net.minecraft.server.level.ServerPlayer>) playersObj;
+                    players = castPlayers;
+                } else {
+                    players = java.util.Collections.emptyList();
+                }
             } catch (Exception e) {
                 players = java.util.Collections.emptyList(); // Fallback to empty list
             }
