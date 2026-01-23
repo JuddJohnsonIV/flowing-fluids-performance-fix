@@ -287,12 +287,10 @@ public class FlowingFluidsFixesMinimal {
         public int getTickCount() { return tickCount; }
     }
     
-    // Performance thresholds and metrics - AGGRESSIVE THROTTLING BASED ON SPARK PROFILE
+    // Performance thresholds and metrics - SMOOTH MATHEMATICAL THROTTLING
     private static final double PERFORMANCE_REPORT_INTERVAL = 10000; // 10 seconds
-    private static final double MSPT_WARNING_THRESHOLD = 15.0; // LOWERED from 20.0
-    private static final double MSPT_CRITICAL_THRESHOLD = 25.0; // LOWERED from 30.0
-    private static final double MSPT_EMERGENCY_THRESHOLD = 40.0; // NEW - Emergency mode
-    private static final double FLOWING_FLUID_EMERGENCY_THRESHOLD = 35.0; // NEW - Specific to fluid operations
+    private static final double MSPT_WARNING_THRESHOLD = 15.0; // For reporting only
+    private static final double MSPT_CRITICAL_THRESHOLD = 25.0; // For reporting only
     private static final double OPTIMIZATION_EFFECTIVENESS_TARGET = 0.8; // 80% improvement target
     
     // TESTING VALIDATION - Cache effectiveness and MSPT reduction validation
@@ -326,19 +324,13 @@ public class FlowingFluidsFixesMinimal {
     private static final long aggressiveDuration = 3000; // 3 seconds minimum aggressive duration
     private static boolean inEmergencyMode = false;
     private static boolean inAggressiveMode = false;
+    private static boolean optimizationsDisabled = false; // For smooth throttling compatibility
     
     // EVENT RATE LIMITING - Prevent system overload
     private static final int MAX_EVENTS_PER_TICK = 100; // Maximum events to process per tick
     private static final int MAX_EVENTS_PER_SECOND = 1000; // Maximum events per second
     private static long eventsThisSecond = 0;
     private static long lastSecondReset = System.currentTimeMillis();
-    
-    // PROGRESSIVE RECOVERY SYSTEM - Timeout and gradual restoration
-    private static long lastHighMSPTTime = 0;
-    private static final long HIGH_MSPT_TIMEOUT = 10000; // 10 seconds timeout
-    private static final long CRITICAL_MSPT_TIMEOUT = 5000; // 5 seconds timeout
-    private static boolean optimizationsDisabled = false;
-    private static long optimizationsDisabledTime = 0;
     
     // FLUID PAUSE SYSTEM - Individual fluid blocks wait for timeout
     private static final ConcurrentHashMap<BlockPos, Long> pausedFluids = new ConcurrentHashMap<>();
@@ -3605,144 +3597,8 @@ public class FlowingFluidsFixesMinimal {
         return skippedFluidEvents.get() + skippedWorldwideOps.get();
     }
     
-    // SPARK PROFILE EMERGENCY THROTTLING METHODS
-    
-    /**
-     * EMERGENCY MODE: Graceful degradation - stop accepting new fluids, process existing ones
-     * Triggered when MSPT > 40ms (severe performance degradation)
-     * Uses hysteresis to prevent rapid on/off cycling
-     */
-    private static void emergencyFluidShutdown() {
-        emergencyActivations.incrementAndGet();
-        
-        // Set emergency mode state and timer
-        inEmergencyMode = true;
-        lastEmergencyTime = System.currentTimeMillis();
-        
-        // GRACEFUL DEGRADATION: Stop accepting new fluid updates
-        acceptNewFluids = false;
-        
-        // Reduce cache sizes to free memory (but don't clear completely)
-        if (blockStateCache.size() > 500) {
-            // Keep only most recent 500 entries
-            List<BlockPos> toRemove = new ArrayList<>();
-            int removeCount = blockStateCache.size() - 500;
-            
-            for (BlockPos pos : blockStateCache.keySet()) {
-                if (removeCount > 0) {
-                    toRemove.add(pos);
-                    removeCount--;
-                } else {
-                    break;
-                }
-            }
-            
-            for (BlockPos pos : toRemove) {
-                blockStateCache.remove(pos);
-            }
-        }
-        
-        if (fluidStateCache.size() > 250) {
-            // Keep only most recent 250 entries
-            List<BlockPos> toRemove = new ArrayList<>();
-            int removeCount = fluidStateCache.size() - 250;
-            
-            for (BlockPos pos : fluidStateCache.keySet()) {
-                if (removeCount > 0) {
-                    toRemove.add(pos);
-                    removeCount--;
-                } else {
-                    break;
-                }
-            }
-            
-            for (BlockPos pos : toRemove) {
-                fluidStateCache.remove(pos);
-            }
-        }
-        
-        // Set maximum throttling for new operations
-        adaptiveThrottleLevel = 5; // Maximum throttling
-        
-        System.out.println("[FLOWING FLUIDS EMERGENCY] Graceful degradation - rejecting new fluids, processing existing - MSPT: " + cachedMSPT + " (Duration: 5s minimum)");
-    }
-    
-    /**
-     * AGGRESSIVE THROTTLING: Heavy fluid throttling - limit new fluid acceptance
-     * Triggered when MSPT > 35ms (fluid operations causing lag)
-     * Uses hysteresis to prevent rapid on/off cycling
-     */
-    private static void aggressiveFluidThrottling() {
-        aggressiveThrottlingActivations.incrementAndGet();
-        
-        // Set aggressive mode state and timer
-        inAggressiveMode = true;
-        lastAggressiveTime = System.currentTimeMillis();
-        
-        // GRACEFUL DEGRADATION: Limit new fluid acceptance
-        acceptNewFluids = false;
-        
-        // Reduce pending fluid changes to minimum
-        if (pendingFluidChanges.size() > 10) {
-            // Keep only the 10 most recent chunks with fluid changes
-            List<Map.Entry<Long, List<BlockPos>>> entries = new ArrayList<>(pendingFluidChanges.entrySet());
-            int keepCount = 10;
-            
-            // Clear and re-add only the most recent chunks
-            pendingFluidChanges.clear();
-            
-            for (Map.Entry<Long, List<BlockPos>> entry : entries) {
-                if (keepCount > 0) {
-                    pendingFluidChanges.put(entry.getKey(), entry.getValue());
-                    keepCount--;
-                }
-            }
-        }
-        
-        // Set high throttling level
-        adaptiveThrottleLevel = 4; // High throttling
-        
-        // Reduce cache sizes to free memory (but keep some for existing fluids)
-        if (blockStateCache.size() > 1000) {
-            // Keep only most recent 1000 entries
-            List<BlockPos> toRemove = new ArrayList<>();
-            int removeCount = blockStateCache.size() - 1000;
-            
-            for (BlockPos pos : blockStateCache.keySet()) {
-                if (removeCount > 0) {
-                    toRemove.add(pos);
-                    removeCount--;
-                } else {
-                    break;
-                }
-            }
-            
-            for (BlockPos pos : toRemove) {
-                blockStateCache.remove(pos);
-            }
-        }
-        
-        if (fluidStateCache.size() > 500) {
-            // Keep only most recent 500 entries
-            List<BlockPos> toRemove = new ArrayList<>();
-            int removeCount = fluidStateCache.size() - 500;
-            
-            for (BlockPos pos : fluidStateCache.keySet()) {
-                if (removeCount > 0) {
-                    toRemove.add(pos);
-                    removeCount--;
-                } else {
-                    break;
-                }
-            }
-            
-            for (BlockPos pos : toRemove) {
-                fluidStateCache.remove(pos);
-            }
-        }
-        
-        System.out.println("[FLOWING FLUIDS AGGRESSIVE] Limited new fluid acceptance - processing existing - MSPT: " + cachedMSPT + " (Duration: 3s minimum)");
-    }
+    // SMOOTH MATHEMATICAL THROTTLING - Emergency methods replaced with continuous scaling
+    // No hard thresholds needed - mathematical functions handle all transitions
     
     /**
      * FLUID PAUSE CLEANUP - Remove expired paused fluids to prevent memory leaks
